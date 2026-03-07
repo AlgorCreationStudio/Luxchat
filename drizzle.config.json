@@ -1,8 +1,0 @@
-{
-  "schema": "./src/db/schema",
-  "out": "./src/db/migrations",
-  "driver": "postgresql",
-  "dbCredentials": {
-    "url": "${DATABASE_URL}"
-  }
-}
