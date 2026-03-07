@@ -263,7 +263,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
       </div>
 
       {/* Input zone */}
-      <div className="flex-shrink-0 z-10 border-t border-border/50 bg-card/40 backdrop-blur-md">
+      <div className="flex-shrink-0 z-10 border-t border-border/50 bg-card/40 backdrop-blur-md pb-safe">
         {replyTo && (
           <ReplyBar replyTo={replyTo} isMe={replyTo.senderId === user?.id} onClear={() => setReplyTo(null)} />
         )}

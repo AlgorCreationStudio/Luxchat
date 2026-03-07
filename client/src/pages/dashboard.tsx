@@ -68,7 +68,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden">
+    <div className="flex w-full bg-background overflow-hidden" style={{ height: '100dvh' }}>
       {/* Incoming call overlay */}
       <AnimatePresence>
         {incomingCall && (

@@ -3,7 +3,7 @@ import {
   users, contacts, chats, chatMembers, messages,
   type User, type InsertUser, type Contact, type Chat, type ChatMember, type Message,
 } from "@shared/schema";
-import { eq, and, desc, ne } from "drizzle-orm";
+import { eq, and, desc, ne, ilike } from "drizzle-orm";
 
 type CreateMessageInput = {
   chatId: string;
@@ -23,7 +23,8 @@ type CreateMessageInput = {
 };
 
 function generateTag(): string {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
 export class DatabaseStorage {
@@ -33,7 +34,7 @@ export class DatabaseStorage {
   }
 
   async getUserByTag(tag: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.tag, tag.toUpperCase()));
+    const [user] = await db.select().from(users).where(ilike(users.tag, tag.trim().toUpperCase()));
     return user;
   }
 
