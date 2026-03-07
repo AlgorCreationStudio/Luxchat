@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Phone, Mic, Paperclip, Smile } from 'lucide-react';
+import { Send, Phone, Mic, Paperclip, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '@/store/use-auth-store';
 import { useMessages } from '@/hooks/use-api';
 import { useWebSocket } from '@/hooks/use-websocket';
@@ -12,9 +12,14 @@ import { CallModal } from '../modals/call-modal';
 import { useToast } from '@/hooks/use-toast';
 import type { Message } from '@shared/schema';
 
-interface Props { chatId: string; chatName?: string; chatAvatar?: string | null }
+interface Props {
+  chatId: string;
+  chatName?: string;
+  chatAvatar?: string | null;
+  onBack?: () => void;
+}
 
-export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: Props) {
+export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, onBack }: Props) {
   const user = useAuthStore((s) => s.user);
   const { data: rawMessages = [], isLoading } = useMessages(chatId);
   const { sendMessage, sendAudio, sendTyping, sendRead, sendReact: sendReaction, sendDelete, on } = useWebSocket();
@@ -34,13 +39,11 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
   const touchStartY = useRef<number>(0);
   const holdingRef = useRef(false);
 
-  // Enrich messages with senderName (mock — in real app fetch from user cache)
   const messages = rawMessages.map((m) => ({
     ...m,
     senderName: m.senderId === user?.id ? (user?.displayName ?? 'Tú') : chatName,
   }));
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -48,12 +51,10 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
     if (isAtBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // Mark as read
   useEffect(() => {
     if (chatId) sendRead(chatId);
   }, [chatId, messages.length, sendRead]);
 
-  // Listen for typing events
   useEffect(() => {
     return on('typing', ({ chatId: cid, userId, isTyping, name }) => {
       if (cid !== chatId || userId === user?.id) return;
@@ -63,12 +64,10 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
     });
   }, [chatId, user?.id, on]);
 
-  // Auto-stop recording at 60s
   useEffect(() => {
     if (recState.seconds >= 60) handleStopRec();
   }, [recState.seconds]);
 
-  // --- Handlers ---
   const handleSend = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!input.trim() || !user) return;
@@ -89,7 +88,6 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
     sendTyping(chatId, true);
     if (typingTimeout.current) clearTimeout(typingTimeout.current);
     typingTimeout.current = setTimeout(() => sendTyping(chatId, false), 2000);
-    // Auto-resize textarea
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 120) + 'px';
@@ -99,7 +97,6 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
-  // Voice recording — pointer events on the button
   const handleVoicePointerDown = async (e: React.PointerEvent) => {
     e.preventDefault();
     holdingRef.current = true;
@@ -111,7 +108,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
 
   const handleVoicePointerMove = useCallback((e: PointerEvent) => {
     if (!recState.isRecording || recState.isLocked) return;
-    const dy = touchStartY.current - e.clientY; // positive = dragging up
+    const dy = touchStartY.current - e.clientY;
     const progress = Math.max(0, Math.min(1, dy / 80));
     setLockProgress(progress);
     if (progress >= 1) lockRec();
@@ -157,16 +154,24 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
 
   return (
     <div className="flex flex-col h-full bg-background relative overflow-hidden">
-      {/* Ambient */}
       <div className="absolute top-[-20%] left-[20%] w-[500px] h-[500px] bg-secondary/5 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-primary/5 rounded-full blur-[120px] pointer-events-none" />
 
       {/* Header */}
-      <div className="h-20 border-b border-border/50 flex items-center justify-between px-8 bg-card/40 backdrop-blur-md z-10 flex-shrink-0">
-        <div className="flex items-center gap-4">
+      <div className="h-16 md:h-20 border-b border-border/50 flex items-center justify-between px-4 md:px-8 bg-card/40 backdrop-blur-md z-10 flex-shrink-0">
+        <div className="flex items-center gap-3">
+          {/* Back button — mobile only */}
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="md:hidden p-2 -ml-1 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
           <Avatar src={chatAvatar} fallback={chatName} />
           <div>
-            <h2 className="font-display text-xl font-bold text-foreground">{chatName}</h2>
+            <h2 className="font-display text-base md:text-xl font-bold text-foreground">{chatName}</h2>
             {typingUsers.length > 0 ? (
               <p className="text-xs text-secondary font-medium flex items-center gap-1">
                 <span className="inline-flex gap-0.5">
@@ -181,14 +186,14 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
         </div>
         <button
           onClick={() => setCallOpen(true)}
-          className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all hover:-translate-y-0.5"
+          className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all"
         >
-          <Phone className="w-5 h-5" />
+          <Phone className="w-4 h-4 md:w-5 md:h-5" />
         </button>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 z-10" ref={scrollRef}>
+      <div className="flex-1 overflow-y-auto px-3 md:px-6 py-4 z-10" ref={scrollRef}>
         {isLoading ? (
           <div className="h-full flex items-center justify-center">
             <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -218,15 +223,11 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
 
       {/* Input zone */}
       <div className="flex-shrink-0 z-10 border-t border-border/50 bg-card/40 backdrop-blur-md">
-        {/* Reply bar */}
         {replyTo && (
           <ReplyBar replyTo={replyTo} isMe={replyTo.senderId === user?.id} onClear={() => setReplyTo(null)} />
         )}
-
-        {/* Input bar — fixed height container */}
-        <div className="relative" style={{ minHeight: '64px' }}>
+        <div className="relative" style={{ minHeight: '56px' }}>
           {recState.isRecording ? (
-            // Recording overlay replaces the input bar in-place, same height
             <div className="absolute inset-0">
               <RecordingOverlay
                 seconds={recState.seconds}
@@ -237,14 +238,11 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
               />
             </div>
           ) : (
-            <div className="flex items-end gap-2 px-4 py-3">
-              {/* Attach */}
-              <label className="w-10 h-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/5 cursor-pointer transition-colors flex-shrink-0">
-                <Paperclip className="w-5 h-5" />
+            <div className="flex items-end gap-2 px-3 md:px-4 py-3">
+              <label className="w-9 h-9 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/5 cursor-pointer transition-colors flex-shrink-0">
+                <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
                 <input type="file" accept="image/*,video/*" className="hidden" onChange={() => {}} />
               </label>
-
-              {/* Textarea */}
               <textarea
                 ref={inputRef}
                 value={input}
@@ -255,12 +253,10 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
                 className="flex-1 bg-black/20 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 resize-none overflow-hidden leading-relaxed"
                 style={{ minHeight: '40px', maxHeight: '120px' }}
               />
-
-              {/* Send or Voice */}
               {input.trim() ? (
                 <button
                   onClick={handleSend}
-                  className="w-10 h-10 flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground hover:shadow-lg hover:shadow-primary/30 transition-all active:scale-95 flex-shrink-0"
+                  className="w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground hover:shadow-lg hover:shadow-primary/30 transition-all active:scale-95 flex-shrink-0"
                 >
                   <Send className="w-4 h-4 ml-0.5" />
                 </button>
@@ -268,9 +264,9 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar }: 
                 <button
                   ref={voiceBtnRef}
                   onPointerDown={handleVoicePointerDown}
-                  className="w-10 h-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors flex-shrink-0 touch-none select-none"
+                  className="w-9 h-9 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors flex-shrink-0 touch-none select-none"
                 >
-                  <Mic className="w-5 h-5" />
+                  <Mic className="w-4 h-4 md:w-5 md:h-5" />
                 </button>
               )}
             </div>

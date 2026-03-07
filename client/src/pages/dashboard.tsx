@@ -18,18 +18,30 @@ export default function DashboardPage() {
 
   if (!user) return null;
 
-  // Find chat metadata for header
   const activeChat = chats.find(c => c.id === params?.id);
+  const isChatOpen = match && params?.id;
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      <Sidebar />
-      <main className="flex-1 h-full relative border-l border-border/50 shadow-[-20px_0_50px_-20px_rgba(0,0,0,0.5)] overflow-hidden">
-        {match && params?.id ? (
+      {/* Sidebar — full screen on mobile when no chat open, fixed width on desktop */}
+      <div className={`
+        ${isChatOpen ? 'hidden md:flex' : 'flex'}
+        w-full md:w-80 h-full flex-col
+      `}>
+        <Sidebar />
+      </div>
+
+      {/* Chat area — full screen on mobile when chat open, flex-1 on desktop */}
+      <main className={`
+        ${isChatOpen ? 'flex' : 'hidden md:flex'}
+        flex-1 h-full relative border-l border-border/50 shadow-[-20px_0_50px_-20px_rgba(0,0,0,0.5)] overflow-hidden flex-col
+      `}>
+        {isChatOpen ? (
           <ChatWindow
-            chatId={params.id}
+            chatId={params!.id}
             chatName={activeChat?.name ?? 'Direct Message'}
             chatAvatar={activeChat?.avatarUrl}
+            onBack={() => setLocation('/app')}
           />
         ) : (
           <div className="h-full flex flex-col items-center justify-center bg-card/20">
