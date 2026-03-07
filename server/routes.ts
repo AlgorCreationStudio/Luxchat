@@ -56,18 +56,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.get(api.users.get.path, async (req, res) => {
-    const user = await storage.getUser(req.params.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
-    res.json(user);
-  });
-
-  // Find user by tag
+  // Find user by tag — MUST be before /api/users/:id to avoid Express conflict
   app.get("/api/users/by-tag/:tag", async (req, res) => {
     const user = await storage.getUserByTag(req.params.tag);
     if (!user) return res.status(404).json({ message: "User not found" });
     const { passwordHash, ...safeUser } = user as any;
     res.json(safeUser);
+  });
+
+  app.get(api.users.get.path, async (req, res) => {
+    const user = await storage.getUser(req.params.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user);
   });
 
   // Get accepted contacts

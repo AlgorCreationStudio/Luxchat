@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, UserPlus, Search, Check, User } from 'lucide-react';
+import { X, UserPlus, Search } from 'lucide-react';
 import { Button, Input } from '../ui-library';
 import { useAuthStore } from '@/store/use-auth-store';
 import { useAddContact } from '@/hooks/use-api';
@@ -48,7 +48,6 @@ export function AddContactModal({ isOpen, onClose }: { isOpen: boolean; onClose:
       { userId: user.id, contactId: found.id },
       {
         onSuccess: () => {
-          // Notify the other user in real-time
           sendContactRequestNotif(found.id);
           toast({ title: "Solicitud enviada ✓", className: "bg-primary text-primary-foreground border-none" });
           setTag('');
@@ -73,42 +72,71 @@ export function AddContactModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     <AnimatePresence>
       {isOpen && (
         <>
+          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={handleClose}
             className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
           />
+
+          {/* 
+            Desktop: centered modal
+            Mobile: bottom sheet that sits above the keyboard
+          */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 p-6"
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 40 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+            className="
+              fixed z-50 w-full
+              /* Mobile: anchor to bottom, no transform */
+              bottom-0 left-0 right-0
+              /* Desktop: center it */
+              md:bottom-auto md:top-1/2 md:left-1/2 md:right-auto
+              md:-translate-x-1/2 md:-translate-y-1/2 md:max-w-md
+            "
           >
-            <div className="glass-panel rounded-2xl p-8 flex flex-col gap-6 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-              <button onClick={handleClose} className="absolute top-4 right-4 p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-white/5">
+            <div className="
+              glass-panel flex flex-col gap-5 relative overflow-hidden
+              /* Mobile: rounded top corners, safe-area bottom padding */
+              rounded-t-3xl p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]
+              /* Desktop: fully rounded */
+              md:rounded-2xl md:p-8
+            ">
+              {/* Handle — mobile only */}
+              <div className="w-10 h-1 bg-white/20 rounded-full mx-auto md:hidden" />
+
+              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+
+              <button
+                onClick={handleClose}
+                className="absolute top-4 right-4 p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-white/5"
+              >
                 <X className="w-5 h-5" />
               </button>
 
+              {/* Header */}
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center text-primary">
-                  <UserPlus className="w-6 h-6" />
+                <div className="w-11 h-11 rounded-full bg-primary/20 flex items-center justify-center text-primary flex-shrink-0">
+                  <UserPlus className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-display font-semibold text-foreground">Agregar Contacto</h3>
+                  <h3 className="text-lg font-display font-semibold text-foreground">Agregar Contacto</h3>
                   <p className="text-sm text-muted-foreground">Busca por tag de LuxChat</p>
                 </div>
               </div>
 
-              {/* Tag info */}
+              {/* Tu tag */}
               {user?.tag && (
                 <div className="flex items-center gap-2 bg-black/20 rounded-xl px-3 py-2 text-xs text-muted-foreground border border-white/5">
                   <span>Tu tag:</span>
                   <span className="font-mono text-primary font-bold">{user.tag}</span>
-                  <span className="text-muted-foreground/50">— compártelo para que te encuentren</span>
+                  <span className="text-muted-foreground/50 hidden sm:inline">— compártelo para que te encuentren</span>
                 </div>
               )}
 
+              {/* Search */}
               <div className="flex gap-2">
                 <Input
                   value={tag}
@@ -119,7 +147,7 @@ export function AddContactModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                   maxLength={8}
                   autoFocus
                 />
-                <Button onClick={handleSearch} isLoading={searching} className="px-4">
+                <Button onClick={handleSearch} isLoading={searching} className="px-4 flex-shrink-0">
                   <Search className="w-4 h-4" />
                 </Button>
               </div>
@@ -130,14 +158,14 @@ export function AddContactModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                   initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                   className="flex items-center gap-4 p-4 rounded-xl bg-black/20 border border-white/5"
                 >
-                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
                     {found.displayName[0].toUpperCase()}
                   </div>
-                  <div className="flex-1">
-                    <p className="font-semibold text-foreground">{found.displayName}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-foreground truncate">{found.displayName}</p>
                     <p className="text-xs font-mono text-muted-foreground">{found.tag}</p>
                   </div>
-                  <Button onClick={handleSendRequest} isLoading={addContact.isPending} size="sm">
+                  <Button onClick={handleSendRequest} isLoading={addContact.isPending} size="sm" className="flex-shrink-0">
                     Enviar
                   </Button>
                 </motion.div>
