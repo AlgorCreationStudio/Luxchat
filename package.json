@@ -6,7 +6,7 @@
     "dev": "tsx server/index.ts",
     "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "NODE_ENV=production node dist/index.js",
-    "db:push": "drizzle-kit push"
+    "db:push": "dotenv -e .env -- drizzle-kit push"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
@@ -67,6 +67,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.19",
+    "dotenv-cli": "^11.0.0",
     "drizzle-kit": "^0.31.9",
     "esbuild": "^0.24.0",
     "postcss": "^8.4.38",
