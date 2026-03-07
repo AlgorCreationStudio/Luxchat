@@ -4,7 +4,8 @@ import type { User } from '@shared/schema';
 
 interface AuthState {
   user: User | null;
-  login: (user: User) => void;
+  token: string | null;
+  login: (user: User, token: string) => void;
   logout: () => void;
 }
 
@@ -12,8 +13,9 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       user: null,
-      login: (user) => set({ user }),
-      logout: () => set({ user: null }),
+      token: null,
+      login: (user, token) => set({ user, token }),
+      logout: () => set({ user: null, token: null }),
     }),
     {
       name: 'luxchat-auth',

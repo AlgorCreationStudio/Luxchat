@@ -8,6 +8,25 @@ export const errorSchemas = {
 };
 
 export const api = {
+  auth: {
+    register: {
+      method: "POST" as const,
+      path: "/api/auth/register" as const,
+      input: z.object({ displayName: z.string(), email: z.string().email(), password: z.string().min(6) }),
+      responses: { 201: z.object({ user: z.custom<typeof users.$inferSelect>(), token: z.string() }) },
+    },
+    login: {
+      method: "POST" as const,
+      path: "/api/auth/login" as const,
+      input: z.object({ email: z.string().email(), password: z.string() }),
+      responses: { 200: z.object({ user: z.custom<typeof users.$inferSelect>(), token: z.string() }) },
+    },
+    me: {
+      method: "GET" as const,
+      path: "/api/auth/me" as const,
+      responses: { 200: z.custom<typeof users.$inferSelect>() },
+    },
+  },
   users: {
     create: {
       method: "POST" as const,
