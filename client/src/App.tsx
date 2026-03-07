@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuthStore } from "@/store/use-auth-store";
+import { InstallPrompt } from "@/components/install-prompt";
 
 // Pages
 import AuthPage from "@/pages/auth";
@@ -30,6 +31,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
+        <InstallPrompt />
         <Router />
       </TooltipProvider>
     </QueryClientProvider>

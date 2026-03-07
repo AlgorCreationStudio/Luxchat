@@ -31,6 +31,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const [replyTo, setReplyTo] = useState<(Message & { senderName: string }) | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [isCallOpen, setCallOpen] = useState(false);
+  const [callStatus, setCallStatus] = useState<'calling' | 'connected' | 'rejected' | 'ended'>('calling');
   const [lockProgress, setLockProgress] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -163,8 +164,37 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1000); }
   }, []);
 
+  // Listen for call responses (answer/reject/end from the other side)
+  useEffect(() => {
+    return on('call', (payload) => {
+      if (payload.fromUserId !== otherUserId && payload.toUserId !== otherUserId) return;
+      if (payload.action === 'answer') setCallStatus('connected');
+      if (payload.action === 'reject') setCallStatus('rejected');
+      if (payload.action === 'end') setCallStatus('ended');
+    });
+  }, [on, otherUserId]);
+
+  // The other participant's userId — for direct chats the chatId encodes both users
+  // We'll look it up from messages or pass it from parent; for now derive from chatId
+  const otherUserId = React.useMemo(() => {
+    // chatId format is "userId1_userId2" (sorted) — extract the other user
+    const parts = chatId.split('_');
+    return parts.find((p) => p !== user?.id) ?? '';
+  }, [chatId, user?.id]);
+
   const handleCall = () => {
+    setCallStatus('calling');
+    if (otherUserId) {
+      sendCall(otherUserId, 'incoming');
+    }
     setCallOpen(true);
+  };
+
+  const handleEndCall = () => {
+    if (otherUserId) {
+      sendCall(otherUserId, 'end');
+    }
+    setCallOpen(false);
   };
 
   return (
@@ -285,7 +315,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
         </div>
       </div>
 
-      <CallModal isOpen={isCallOpen} onClose={() => setCallOpen(false)} contactName={chatName} />
+      <CallModal isOpen={isCallOpen} onClose={handleEndCall} contactName={chatName} callStatus={callStatus} />
     </div>
   );
 }

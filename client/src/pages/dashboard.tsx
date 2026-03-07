@@ -5,6 +5,7 @@ import { useAuthStore } from '@/store/use-auth-store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { ChatWindow } from '@/components/chat/chat-window';
 import { IncomingCallModal } from '@/components/modals/incoming-call-modal';
+import { CallModal } from '@/components/modals/call-modal';
 import { useChats } from '@/hooks/use-api';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { MessageSquareDashed } from 'lucide-react';
@@ -17,22 +18,28 @@ export default function DashboardPage() {
   const { on, sendCall } = useWebSocket();
 
   const [incomingCall, setIncomingCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
+  // Answered incoming call shown in CallModal
+  const [answeredCall, setAnsweredCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
+  const [answeredCallStatus, setAnsweredCallStatus] = useState<'calling' | 'connected' | 'rejected' | 'ended'>('connected');
 
   useEffect(() => {
     if (!user) setLocation('/');
   }, [user, setLocation]);
 
-  // Listen for incoming calls
+  // Listen for incoming calls & call lifecycle events
   useEffect(() => {
     return on('call', (payload) => {
       if (payload.action === 'incoming' && payload.toUserId === user?.id) {
         setIncomingCall({ fromUserId: payload.fromUserId, fromName: payload.fromName });
       }
+      if (payload.action === 'end' && answeredCall) {
+        setAnsweredCallStatus('ended');
+      }
       if (payload.action === 'end' || payload.action === 'reject') {
         setIncomingCall(null);
       }
     });
-  }, [on, user?.id]);
+  }, [on, user?.id, answeredCall]);
 
   if (!user) return null;
 
@@ -42,14 +49,22 @@ export default function DashboardPage() {
   const handleAnswerCall = () => {
     if (!incomingCall) return;
     sendCall(incomingCall.fromUserId, 'answer');
+    setAnsweredCall(incomingCall);
+    setAnsweredCallStatus('connected');
     setIncomingCall(null);
-    // TODO: open call UI
   };
 
   const handleRejectCall = () => {
     if (!incomingCall) return;
     sendCall(incomingCall.fromUserId, 'reject');
     setIncomingCall(null);
+  };
+
+  const handleEndAnsweredCall = () => {
+    if (answeredCall) {
+      sendCall(answeredCall.fromUserId, 'end');
+    }
+    setAnsweredCall(null);
   };
 
   return (
@@ -65,6 +80,16 @@ export default function DashboardPage() {
           />
         )}
       </AnimatePresence>
+
+      {/* Answered incoming call modal */}
+      {answeredCall && (
+        <CallModal
+          isOpen={!!answeredCall}
+          onClose={handleEndAnsweredCall}
+          contactName={answeredCall.fromName}
+          callStatus={answeredCallStatus}
+        />
+      )}
 
       {/* Sidebar */}
       <div className={`${isChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-80 h-full flex-col`}>
