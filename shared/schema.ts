@@ -8,14 +8,17 @@ export const users = pgTable("users", {
   email: text("email").unique(),
   passwordHash: text("password_hash"),
   avatarUrl: text("avatar_url"),
+  tag: text("tag"),          // Short 6-char code e.g. "AB12CD"
   status: text("status").default("online"),
   lastSeen: timestamp("last_seen").defaultNow(),
 });
 
 export const contacts = pgTable("contacts", {
   id: serial("id").primaryKey(),
-  userId: uuid("user_id").notNull(),
-  contactId: uuid("contact_id").notNull(),
+  userId: uuid("user_id").notNull(),       // who receives the request / owns the contact
+  contactId: uuid("contact_id").notNull(), // the other person
+  fromUserId: uuid("from_user_id"),        // who SENT the request
+  status: text("status").default("accepted"), // pending | accepted | rejected
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -37,24 +40,20 @@ export const messages = pgTable("messages", {
   chatId: uuid("chat_id").notNull(),
   senderId: uuid("sender_id").notNull(),
   content: text("content").notNull().default(""),
-  type: text("type").default("text"), // text | audio | image | deleted
-  // Audio
-  audioData: text("audio_data"),      // base64 data URL
-  audioType: text("audio_type"),      // mime type
-  audioDuration: integer("audio_duration"), // seconds
-  // Media
+  type: text("type").default("text"),
+  audioData: text("audio_data"),
+  audioType: text("audio_type"),
+  audioDuration: integer("audio_duration"),
   mediaData: text("media_data"),
   mediaType: text("media_type"),
-  // Reply
   replyToId: integer("reply_to_id"),
   replyToText: text("reply_to_text"),
   replyToSenderName: text("reply_to_sender_name"),
   replyToSenderId: uuid("reply_to_sender_id"),
   replyToIsAudio: boolean("reply_to_is_audio").default(false),
-  // Read
   read: boolean("read").default(false),
   deleted: boolean("deleted").default(false),
-  reactions: text("reactions").default("{}"), // JSON string
+  reactions: text("reactions").default("{}"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

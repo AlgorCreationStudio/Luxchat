@@ -39,16 +39,36 @@ export const api = {
       path: "/api/users/:id" as const,
       responses: { 200: z.custom<typeof users.$inferSelect>(), 404: errorSchemas.notFound },
     },
+    findByTag: {
+      method: "GET" as const,
+      path: "/api/users/by-tag/:tag" as const,
+      responses: { 200: z.custom<typeof users.$inferSelect>(), 404: errorSchemas.notFound },
+    },
     contacts: {
       method: "GET" as const,
       path: "/api/users/:id/contacts" as const,
       responses: { 200: z.array(z.custom<typeof users.$inferSelect>()) },
+    },
+    pendingRequests: {
+      method: "GET" as const,
+      path: "/api/users/:id/pending-requests" as const,
+      responses: { 200: z.array(z.custom<typeof users.$inferSelect & { requestId: number }>()) },
     },
     addContact: {
       method: "POST" as const,
       path: "/api/users/:id/contacts" as const,
       input: z.object({ contactId: z.string() }),
       responses: { 201: z.custom<typeof contacts.$inferSelect>(), 400: errorSchemas.validation },
+    },
+    acceptContact: {
+      method: "POST" as const,
+      path: "/api/users/:id/contacts/:requestId/accept" as const,
+      responses: { 200: z.object({ success: z.boolean() }) },
+    },
+    rejectContact: {
+      method: "POST" as const,
+      path: "/api/users/:id/contacts/:requestId/reject" as const,
+      responses: { 200: z.object({ success: z.boolean() }) },
     },
     chats: {
       method: "GET" as const,
@@ -67,6 +87,12 @@ export const api = {
       method: "GET" as const,
       path: "/api/chats/:id/messages" as const,
       responses: { 200: z.array(z.custom<typeof messages.$inferSelect>()), 404: errorSchemas.notFound },
+    },
+    markRead: {
+      method: "POST" as const,
+      path: "/api/chats/:id/read" as const,
+      input: z.object({ userId: z.string() }),
+      responses: { 200: z.object({ success: z.boolean() }) },
     },
   },
 };

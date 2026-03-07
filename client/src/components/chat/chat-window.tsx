@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Phone, Mic, Paperclip, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '@/store/use-auth-store';
-import { useMessages } from '@/hooks/use-api';
+import { useMessages, useMarkRead } from '@/hooks/use-api';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useRecording } from '@/hooks/use-recording';
 import { Avatar } from '../ui-library';
@@ -22,8 +22,9 @@ interface Props {
 export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, onBack }: Props) {
   const user = useAuthStore((s) => s.user);
   const { data: rawMessages = [], isLoading } = useMessages(chatId);
-  const { sendMessage, sendAudio, sendTyping, sendRead, sendReact: sendReaction, sendDelete, on } = useWebSocket();
+  const { sendMessage, sendAudio, sendTyping, sendRead, sendReact: sendReaction, sendDelete, sendCall, on } = useWebSocket();
   const { state: recState, start: startRec, lock: lockRec, stop: stopRec, cancel: cancelRec } = useRecording();
+  const markRead = useMarkRead();
   const { toast } = useToast();
 
   const [input, setInput] = useState('');
@@ -38,12 +39,14 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const voiceBtnRef = useRef<HTMLButtonElement>(null);
   const touchStartY = useRef<number>(0);
   const holdingRef = useRef(false);
+  const isFocused = useRef(true);
 
   const messages = rawMessages.map((m) => ({
     ...m,
     senderName: m.senderId === user?.id ? (user?.displayName ?? 'Tú') : chatName,
   }));
 
+  // Scroll to bottom on new messages
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -51,9 +54,19 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (isAtBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  // Mark as read ONLY when window is focused and user is in this chat
   useEffect(() => {
-    if (chatId) sendRead(chatId);
-  }, [chatId, messages.length, sendRead]);
+    const markAsRead = () => {
+      if (document.hasFocus() && chatId && user) {
+        markRead.mutate({ chatId, userId: user.id });
+        sendRead(chatId);
+      }
+    };
+
+    markAsRead(); // Mark on mount
+    window.addEventListener('focus', markAsRead);
+    return () => window.removeEventListener('focus', markAsRead);
+  }, [chatId, user?.id]);
 
   useEffect(() => {
     return on('typing', ({ chatId: cid, userId, isTyping, name }) => {
@@ -117,9 +130,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const handleVoicePointerUp = useCallback(async () => {
     if (!holdingRef.current) return;
     holdingRef.current = false;
-    if (!recState.isLocked && recState.isRecording) {
-      await handleStopRec();
-    }
+    if (!recState.isLocked && recState.isRecording) await handleStopRec();
   }, [recState.isLocked, recState.isRecording]);
 
   useEffect(() => {
@@ -152,6 +163,10 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1000); }
   }, []);
 
+  const handleCall = () => {
+    setCallOpen(true);
+  };
+
   return (
     <div className="flex flex-col h-full bg-background relative overflow-hidden">
       <div className="absolute top-[-20%] left-[20%] w-[500px] h-[500px] bg-secondary/5 rounded-full blur-[120px] pointer-events-none" />
@@ -160,12 +175,8 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
       {/* Header */}
       <div className="h-16 md:h-20 border-b border-border/50 flex items-center justify-between px-4 md:px-8 bg-card/40 backdrop-blur-md z-10 flex-shrink-0">
         <div className="flex items-center gap-3">
-          {/* Back button — mobile only */}
           {onBack && (
-            <button
-              onClick={onBack}
-              className="md:hidden p-2 -ml-1 text-muted-foreground hover:text-foreground transition-colors"
-            >
+            <button onClick={onBack} className="md:hidden p-2 -ml-1 text-muted-foreground hover:text-foreground transition-colors">
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
@@ -185,7 +196,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
           </div>
         </div>
         <button
-          onClick={() => setCallOpen(true)}
+          onClick={handleCall}
           className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all"
         >
           <Phone className="w-4 h-4 md:w-5 md:h-5" />
@@ -201,7 +212,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
         ) : messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
             <p className="font-display text-2xl mb-2 text-white/40">Say Hello</p>
-            <p className="text-sm">This is the beginning of your legendary conversation.</p>
+            <p className="text-sm">This is the beginning of your conversation.</p>
           </div>
         ) : (
           <div className="flex flex-col justify-end min-h-full">

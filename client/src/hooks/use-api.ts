@@ -2,6 +2,18 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import type { User, Chat, Message } from "@shared/schema";
 
+function getAuthHeaders() {
+  try {
+    const stored = localStorage.getItem('luxchat-auth');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      const token = parsed?.state?.token;
+      if (token) return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+    }
+  } catch {}
+  return { 'Content-Type': 'application/json' };
+}
+
 // --- USERS ---
 export function useCreateUser() {
   return useMutation({
@@ -29,6 +41,19 @@ export function useUser(id?: string) {
   });
 }
 
+export function useUserByTag(tag?: string) {
+  return useQuery({
+    queryKey: ["user-by-tag", tag],
+    queryFn: async () => {
+      const res = await fetch(`/api/users/by-tag/${tag}`);
+      if (!res.ok) throw new Error("User not found");
+      return res.json() as Promise<User>;
+    },
+    enabled: !!tag && tag.length >= 4,
+    retry: false,
+  });
+}
+
 // --- CONTACTS ---
 export function useContacts(userId?: string) {
   return useQuery({
@@ -39,6 +64,20 @@ export function useContacts(userId?: string) {
       return res.json() as Promise<User[]>;
     },
     enabled: !!userId,
+    refetchInterval: 10000,
+  });
+}
+
+export function usePendingRequests(userId?: string) {
+  return useQuery({
+    queryKey: ["pending-requests", userId],
+    queryFn: async () => {
+      const res = await fetch(`/api/users/${userId}/pending-requests`);
+      if (!res.ok) throw new Error("Failed to fetch pending requests");
+      return res.json() as Promise<(User & { requestId: number })[]>;
+    },
+    enabled: !!userId,
+    refetchInterval: 15000,
   });
 }
 
@@ -58,6 +97,35 @@ export function useAddContact() {
   });
 }
 
+export function useAcceptContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, requestId }: { userId: string; requestId: number }) => {
+      const res = await fetch(`/api/users/${userId}/contacts/${requestId}/accept`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to accept");
+      return res.json();
+    },
+    onSuccess: (_, { userId }) => {
+      qc.invalidateQueries({ queryKey: ["pending-requests", userId] });
+      qc.invalidateQueries({ queryKey: ["contacts", userId] });
+    },
+  });
+}
+
+export function useRejectContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, requestId }: { userId: string; requestId: number }) => {
+      const res = await fetch(`/api/users/${userId}/contacts/${requestId}/reject`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to reject");
+      return res.json();
+    },
+    onSuccess: (_, { userId }) => {
+      qc.invalidateQueries({ queryKey: ["pending-requests", userId] });
+    },
+  });
+}
+
 // --- CHATS ---
 export function useChats(userId?: string) {
   return useQuery({
@@ -65,10 +133,10 @@ export function useChats(userId?: string) {
     queryFn: async () => {
       const res = await fetch(buildUrl(api.users.chats.path, { id: userId! }));
       if (!res.ok) throw new Error("Failed to fetch chats");
-      return res.json() as Promise<(Chat & { name?: string; avatarUrl?: string })[]>;
+      return res.json() as Promise<(Chat & { name?: string; avatarUrl?: string; lastMessage?: string; unread?: number })[]>;
     },
     enabled: !!userId,
-    refetchInterval: 5000, // poll for new chat snippets
+    refetchInterval: 5000,
   });
 }
 
@@ -99,5 +167,17 @@ export function useMessages(chatId?: string) {
     },
     enabled: !!chatId,
     staleTime: 0,
+  });
+}
+
+export function useMarkRead() {
+  return useMutation({
+    mutationFn: async ({ chatId, userId }: { chatId: string; userId: string }) => {
+      await fetch(`/api/chats/${chatId}/read`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+    },
   });
 }

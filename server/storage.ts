@@ -3,21 +3,18 @@ import {
   users, contacts, chats, chatMembers, messages,
   type User, type InsertUser, type Contact, type Chat, type ChatMember, type Message,
 } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc, ne } from "drizzle-orm";
 
 type CreateMessageInput = {
   chatId: string;
   senderId: string;
   content: string;
   type?: string;
-  // Audio
   audioData?: string;
   audioType?: string;
   audioDuration?: number;
-  // Media
   mediaData?: string;
   mediaType?: string;
-  // Reply
   replyToId?: number;
   replyToText?: string;
   replyToSenderName?: string;
@@ -25,35 +22,24 @@ type CreateMessageInput = {
   replyToIsAudio?: boolean;
 };
 
-export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  updateUserStatus(id: string, status: string): Promise<void>;
-
-  getUserContacts(userId: string): Promise<User[]>;
-  addContact(userId: string, contactId: string): Promise<Contact>;
-
-  getUserChats(userId: string): Promise<(Chat & { name?: string; avatarUrl?: string; lastMessage?: string })[]>;
-  createChat(participantIds: string[]): Promise<Chat>;
-  getChat(id: string): Promise<Chat | undefined>;
-  getChatMembers(chatId: string): Promise<ChatMember[]>;
-
-  getChatMessages(chatId: string): Promise<Message[]>;
-  createMessage(msg: CreateMessageInput): Promise<Message>;
-  markMessagesRead(chatId: string, userId: string): Promise<void>;
-  deleteMessage(messageId: number): Promise<void>;
-  updateReactions(messageId: number, reactions: string): Promise<void>;
-  getMessageReactions(messageId: number): Promise<string>;
+function generateTag(): string {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-export class DatabaseStorage implements IStorage {
+export class DatabaseStorage {
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
   }
 
+  async getUserByTag(tag: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.tag, tag.toUpperCase()));
+    return user;
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
+    const tag = generateTag();
+    const [user] = await db.insert(users).values({ ...insertUser, tag }).returning();
     return user;
   }
 
@@ -61,22 +47,85 @@ export class DatabaseStorage implements IStorage {
     await db.update(users).set({ status, lastSeen: new Date() }).where(eq(users.id, id));
   }
 
+  // Returns accepted contacts
   async getUserContacts(userId: string): Promise<User[]> {
-    const rows = await db.select().from(contacts).where(eq(contacts.userId, userId));
+    const rows = await db.select().from(contacts).where(
+      and(eq(contacts.userId, userId), eq(contacts.status, "accepted"))
+    );
     if (rows.length === 0) return [];
     const allUsers = await db.select().from(users);
     return allUsers.filter((u) => rows.some((r) => r.contactId === u.id));
   }
 
+  // Returns incoming pending requests with sender info
+  async getPendingRequests(userId: string): Promise<(User & { requestId: number })[]> {
+    const rows = await db.select().from(contacts).where(
+      and(eq(contacts.contactId, userId), eq(contacts.status, "pending"))
+    );
+    if (rows.length === 0) return [];
+    const result: (User & { requestId: number })[] = [];
+    for (const row of rows) {
+      const sender = await this.getUser(row.fromUserId ?? row.userId);
+      if (sender) result.push({ ...sender, requestId: row.id });
+    }
+    return result;
+  }
+
+  // Send a contact request (pending)
   async addContact(userId: string, contactId: string): Promise<Contact> {
-    // Check contact exists
     const target = await this.getUser(contactId);
     if (!target) throw new Error("User not found");
-    const [contact] = await db.insert(contacts).values({ userId, contactId }).returning();
+    if (userId === contactId) throw new Error("You can't add yourself");
+
+    // Check if already exists
+    const [existing] = await db.select().from(contacts).where(
+      and(eq(contacts.userId, userId), eq(contacts.contactId, contactId))
+    );
+    if (existing) throw new Error("Contact already added or request pending");
+
+    // Create pending request — both sides need a row
+    const [contact] = await db.insert(contacts).values({
+      userId: contactId,   // the receiver
+      contactId: userId,   // the sender (as the "contact")
+      fromUserId: userId,  // who sent it
+      status: "pending",
+    }).returning();
     return contact;
   }
 
-  async getUserChats(userId: string): Promise<(Chat & { name?: string; avatarUrl?: string; lastMessage?: string })[]> {
+  async acceptContact(requestId: number, userId: string): Promise<void> {
+    // Get the request
+    const [req] = await db.select().from(contacts).where(eq(contacts.id, requestId));
+    if (!req || req.userId !== userId) throw new Error("Request not found");
+
+    // Update request to accepted
+    await db.update(contacts).set({ status: "accepted" }).where(eq(contacts.id, requestId));
+
+    // Create reverse contact row so both can see each other
+    const [reverseExists] = await db.select().from(contacts).where(
+      and(eq(contacts.userId, req.contactId), eq(contacts.contactId, userId))
+    );
+    if (!reverseExists) {
+      await db.insert(contacts).values({
+        userId: req.contactId,
+        contactId: userId,
+        fromUserId: userId,
+        status: "accepted",
+      });
+    } else {
+      await db.update(contacts).set({ status: "accepted" }).where(
+        and(eq(contacts.userId, req.contactId), eq(contacts.contactId, userId))
+      );
+    }
+  }
+
+  async rejectContact(requestId: number, userId: string): Promise<void> {
+    await db.update(contacts).set({ status: "rejected" }).where(
+      and(eq(contacts.id, requestId), eq(contacts.userId, userId))
+    );
+  }
+
+  async getUserChats(userId: string): Promise<(Chat & { name?: string; avatarUrl?: string; lastMessage?: string; unread?: number })[]> {
     const memberships = await db.select().from(chatMembers).where(eq(chatMembers.userId, userId));
     if (memberships.length === 0) return [];
 
@@ -85,7 +134,6 @@ export class DatabaseStorage implements IStorage {
       const [chat] = await db.select().from(chats).where(eq(chats.id, m.chatId));
       if (!chat) continue;
 
-      // Get last message
       const [lastMsg] = await db
         .select()
         .from(messages)
@@ -94,12 +142,14 @@ export class DatabaseStorage implements IStorage {
         .limit(1);
 
       const lastMessage = lastMsg
-        ? lastMsg.deleted
-          ? "🚫 Mensaje eliminado"
-          : lastMsg.type === "audio"
-          ? "🎤 Nota de voz"
+        ? lastMsg.deleted ? "🚫 Mensaje eliminado"
+          : lastMsg.type === "audio" ? "🎤 Nota de voz"
           : lastMsg.content || ""
         : "";
+
+      // Count unread
+      const allMsgs = await db.select().from(messages).where(eq(messages.chatId, chat.id));
+      const unread = allMsgs.filter(msg => !msg.read && msg.senderId !== userId).length;
 
       if (!chat.isGroup) {
         const members = await db.select().from(chatMembers).where(eq(chatMembers.chatId, chat.id));
@@ -107,23 +157,17 @@ export class DatabaseStorage implements IStorage {
         if (other) {
           const otherUser = await this.getUser(other.userId);
           if (otherUser) {
-            result.push({
-              ...chat,
-              name: otherUser.displayName,
-              avatarUrl: otherUser.avatarUrl ?? undefined,
-              lastMessage,
-            });
+            result.push({ ...chat, name: otherUser.displayName, avatarUrl: otherUser.avatarUrl ?? undefined, lastMessage, unread });
             continue;
           }
         }
       }
-      result.push({ ...chat, lastMessage });
+      result.push({ ...chat, lastMessage, unread });
     }
     return result;
   }
 
   async createChat(participantIds: string[]): Promise<Chat> {
-    // Check if 1-on-1 chat already exists between these two
     if (participantIds.length === 2) {
       const [a, b] = participantIds;
       const aMemberships = await db.select().from(chatMembers).where(eq(chatMembers.userId, a));
@@ -158,43 +202,40 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createMessage(msg: CreateMessageInput): Promise<Message> {
-    const [message] = await db
-      .insert(messages)
-      .values({
-        chatId: msg.chatId,
-        senderId: msg.senderId,
-        content: msg.content ?? "",
-        type: msg.type ?? "text",
-        audioData: msg.audioData,
-        audioType: msg.audioType,
-        audioDuration: msg.audioDuration,
-        mediaData: msg.mediaData,
-        mediaType: msg.mediaType,
-        replyToId: msg.replyToId,
-        replyToText: msg.replyToText,
-        replyToSenderName: msg.replyToSenderName,
-        replyToSenderId: msg.replyToSenderId,
-        replyToIsAudio: msg.replyToIsAudio ?? false,
-        reactions: "{}",
-        read: false,
-        deleted: false,
-      })
-      .returning();
+    const [message] = await db.insert(messages).values({
+      chatId: msg.chatId,
+      senderId: msg.senderId,
+      content: msg.content ?? "",
+      type: msg.type ?? "text",
+      audioData: msg.audioData,
+      audioType: msg.audioType,
+      audioDuration: msg.audioDuration,
+      mediaData: msg.mediaData,
+      mediaType: msg.mediaType,
+      replyToId: msg.replyToId,
+      replyToText: msg.replyToText,
+      replyToSenderName: msg.replyToSenderName,
+      replyToSenderId: msg.replyToSenderId,
+      replyToIsAudio: msg.replyToIsAudio ?? false,
+      reactions: "{}",
+      read: false,
+      deleted: false,
+    }).returning();
     return message;
   }
 
   async markMessagesRead(chatId: string, userId: string): Promise<void> {
-    // Mark all messages in chat not sent by userId as read
-    await db
-      .update(messages)
-      .set({ read: true })
-      .where(eq(messages.chatId, chatId));
+    // Only mark messages NOT sent by this user as read
+    const chatMessages = await db.select().from(messages).where(eq(messages.chatId, chatId));
+    for (const msg of chatMessages) {
+      if (msg.senderId !== userId && !msg.read) {
+        await db.update(messages).set({ read: true }).where(eq(messages.id, msg.id));
+      }
+    }
   }
 
   async deleteMessage(messageId: number): Promise<void> {
-    await db
-      .update(messages)
-      .set({ deleted: true, content: "", audioData: null, mediaData: null })
+    await db.update(messages).set({ deleted: true, content: "", audioData: null, mediaData: null })
       .where(eq(messages.id, messageId));
   }
 
@@ -205,6 +246,11 @@ export class DatabaseStorage implements IStorage {
   async getMessageReactions(messageId: number): Promise<string> {
     const [msg] = await db.select({ reactions: messages.reactions }).from(messages).where(eq(messages.id, messageId));
     return msg?.reactions ?? "{}";
+  }
+
+  async getMessageChatId(messageId: number): Promise<string | undefined> {
+    const [msg] = await db.select({ chatId: messages.chatId }).from(messages).where(eq(messages.id, messageId));
+    return msg?.chatId;
   }
 }
 

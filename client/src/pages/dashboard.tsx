@@ -1,9 +1,12 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation, useRoute } from 'wouter';
+import { AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '@/store/use-auth-store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { ChatWindow } from '@/components/chat/chat-window';
+import { IncomingCallModal } from '@/components/modals/incoming-call-modal';
 import { useChats } from '@/hooks/use-api';
+import { useWebSocket } from '@/hooks/use-websocket';
 import { MessageSquareDashed } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -11,31 +14,65 @@ export default function DashboardPage() {
   const [, setLocation] = useLocation();
   const [match, params] = useRoute('/chat/:id');
   const { data: chats = [] } = useChats(user?.id);
+  const { on, sendCall } = useWebSocket();
+
+  const [incomingCall, setIncomingCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
 
   useEffect(() => {
     if (!user) setLocation('/');
   }, [user, setLocation]);
+
+  // Listen for incoming calls
+  useEffect(() => {
+    return on('call', (payload) => {
+      if (payload.action === 'incoming' && payload.toUserId === user?.id) {
+        setIncomingCall({ fromUserId: payload.fromUserId, fromName: payload.fromName });
+      }
+      if (payload.action === 'end' || payload.action === 'reject') {
+        setIncomingCall(null);
+      }
+    });
+  }, [on, user?.id]);
 
   if (!user) return null;
 
   const activeChat = chats.find(c => c.id === params?.id);
   const isChatOpen = match && params?.id;
 
+  const handleAnswerCall = () => {
+    if (!incomingCall) return;
+    sendCall(incomingCall.fromUserId, 'answer');
+    setIncomingCall(null);
+    // TODO: open call UI
+  };
+
+  const handleRejectCall = () => {
+    if (!incomingCall) return;
+    sendCall(incomingCall.fromUserId, 'reject');
+    setIncomingCall(null);
+  };
+
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      {/* Sidebar — full screen on mobile when no chat open, fixed width on desktop */}
-      <div className={`
-        ${isChatOpen ? 'hidden md:flex' : 'flex'}
-        w-full md:w-80 h-full flex-col
-      `}>
+      {/* Incoming call overlay */}
+      <AnimatePresence>
+        {incomingCall && (
+          <IncomingCallModal
+            callerName={incomingCall.fromName}
+            callerId={incomingCall.fromUserId}
+            onAnswer={handleAnswerCall}
+            onReject={handleRejectCall}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Sidebar */}
+      <div className={`${isChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-80 h-full flex-col`}>
         <Sidebar />
       </div>
 
-      {/* Chat area — full screen on mobile when chat open, flex-1 on desktop */}
-      <main className={`
-        ${isChatOpen ? 'flex' : 'hidden md:flex'}
-        flex-1 h-full relative border-l border-border/50 shadow-[-20px_0_50px_-20px_rgba(0,0,0,0.5)] overflow-hidden flex-col
-      `}>
+      {/* Chat area */}
+      <main className={`${isChatOpen ? 'flex' : 'hidden md:flex'} flex-1 h-full relative border-l border-border/50 shadow-[-20px_0_50px_-20px_rgba(0,0,0,0.5)] overflow-hidden flex-col`}>
         {isChatOpen ? (
           <ChatWindow
             chatId={params!.id}
@@ -49,7 +86,7 @@ export default function DashboardPage() {
               <MessageSquareDashed className="w-12 h-12 text-primary/40" />
             </div>
             <h2 className="text-3xl font-display font-bold text-foreground mb-3">Welcome to LuxChat</h2>
-            <p className="text-muted-foreground">Select a conversation or add a contact to begin.</p>
+            <p className="text-muted-foreground">Selecciona una conversación para comenzar.</p>
           </div>
         )}
       </main>

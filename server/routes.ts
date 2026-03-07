@@ -5,7 +5,6 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 
-// ── WebSocket message schemas ──────────────────────────────────────────────
 const WsSendMessage = z.object({
   chatId: z.string(),
   senderId: z.string(),
@@ -23,24 +22,13 @@ const WsSendMessage = z.object({
   replyToIsAudio: z.boolean().optional(),
 });
 
-const WsTyping = z.object({
-  chatId: z.string(),
-  userId: z.string(),
-  isTyping: z.boolean(),
-  name: z.string(),
-});
-
+const WsTyping = z.object({ chatId: z.string(), userId: z.string(), isTyping: z.boolean(), name: z.string() });
 const WsRead = z.object({ chatId: z.string(), readBy: z.string() });
-
-const WsReaction = z.object({
-  messageId: z.number(),
-  userId: z.string(),
-  emoji: z.string(),
-});
-
+const WsReaction = z.object({ messageId: z.number(), userId: z.string(), emoji: z.string() });
 const WsDelete = z.object({ messageId: z.number(), chatId: z.string() });
+const WsCall = z.object({ toUserId: z.string(), fromUserId: z.string(), fromName: z.string(), action: z.enum(["incoming", "answer", "reject", "end"]) });
+const WsContactRequest = z.object({ toUserId: z.string(), fromUserId: z.string(), fromName: z.string() });
 
-// ── Helpers ────────────────────────────────────────────────────────────────
 function broadcast(clients: Map<string, WebSocket>, userIds: string[], payload: object) {
   const json = JSON.stringify(payload);
   userIds.forEach((uid) => {
@@ -53,7 +41,6 @@ function memberIds(members: { userId: string }[]): string[] {
   return members.map((m) => m.userId);
 }
 
-// ── Routes ─────────────────────────────────────────────────────────────────
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
   // Users
@@ -64,7 +51,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(201).json(user);
     } catch (err) {
       if (err instanceof z.ZodError)
-        return res.status(400).json({ message: err.errors[0].message, field: err.errors[0].path.join(".") });
+        return res.status(400).json({ message: err.errors[0].message });
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -75,10 +62,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(user);
   });
 
+  // Find user by tag
+  app.get("/api/users/by-tag/:tag", async (req, res) => {
+    const user = await storage.getUserByTag(req.params.tag);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const { passwordHash, ...safeUser } = user as any;
+    res.json(safeUser);
+  });
+
+  // Get accepted contacts
   app.get(api.users.contacts.path, async (req, res) => {
     res.json(await storage.getUserContacts(req.params.id));
   });
 
+  // Get pending incoming requests
+  app.get("/api/users/:id/pending-requests", async (req, res) => {
+    res.json(await storage.getPendingRequests(req.params.id));
+  });
+
+  // Send contact request
   app.post(api.users.addContact.path, async (req, res) => {
     try {
       const input = api.users.addContact.input.parse(req.body);
@@ -86,9 +88,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(201).json(contact);
     } catch (err) {
       if (err instanceof z.ZodError)
-        return res.status(400).json({ message: err.errors[0].message, field: err.errors[0].path.join(".") });
+        return res.status(400).json({ message: err.errors[0].message });
       const msg = err instanceof Error ? err.message : "Internal server error";
       res.status(400).json({ message: msg });
+    }
+  });
+
+  // Accept contact request
+  app.post("/api/users/:id/contacts/:requestId/accept", async (req, res) => {
+    try {
+      await storage.acceptContact(Number(req.params.requestId), req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : "Error" });
+    }
+  });
+
+  // Reject contact request
+  app.post("/api/users/:id/contacts/:requestId/reject", async (req, res) => {
+    try {
+      await storage.rejectContact(Number(req.params.requestId), req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : "Error" });
     }
   });
 
@@ -104,7 +126,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(201).json(chat);
     } catch (err) {
       if (err instanceof z.ZodError)
-        return res.status(400).json({ message: err.errors[0].message, field: err.errors[0].path.join(".") });
+        return res.status(400).json({ message: err.errors[0].message });
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -113,9 +135,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(await storage.getChatMessages(req.params.id));
   });
 
-  // ── WebSocket ────────────────────────────────────────────────────────────
+  // Mark chat as read (explicit, not auto)
+  app.post("/api/chats/:id/read", async (req, res) => {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ message: "userId required" });
+    await storage.markMessagesRead(req.params.id, userId);
+    res.json({ success: true });
+  });
+
+  // WebSocket
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
-  const clients = new Map<string, WebSocket>(); // userId → ws
+  const clients = new Map<string, WebSocket>();
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url!, `http://${req.headers.host}`);
@@ -129,7 +159,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       try {
         const { type, payload } = JSON.parse(raw.toString());
 
-        // ── New message ──────────────────────────────────────────────────
         if (type === "message") {
           const p = WsSendMessage.parse(payload);
           const saved = await storage.createMessage(p);
@@ -140,18 +169,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           });
         }
 
-        // ── Typing indicator ─────────────────────────────────────────────
         if (type === "typing") {
           const p = WsTyping.parse(payload);
           const members = await storage.getChatMembers(p.chatId);
-          broadcast(
-            clients,
-            memberIds(members).filter((id) => id !== p.userId),
-            { type: "typing", payload: p }
-          );
+          broadcast(clients, memberIds(members).filter((id) => id !== p.userId), { type: "typing", payload: p });
         }
 
-        // ── Mark read ────────────────────────────────────────────────────
         if (type === "read") {
           const p = WsRead.parse(payload);
           await storage.markMessagesRead(p.chatId, p.readBy);
@@ -159,7 +182,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           broadcast(clients, memberIds(members), { type: "read", payload: p });
         }
 
-        // ── Reaction ─────────────────────────────────────────────────────
         if (type === "reaction") {
           const p = WsReaction.parse(payload);
           const currentJson = await storage.getMessageReactions(p.messageId);
@@ -168,9 +190,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (!reactions[p.emoji]) reactions[p.emoji] = [];
           const idx = reactions[p.emoji].indexOf(p.userId);
           if (idx >= 0) {
-            reactions[p.emoji].splice(idx, 1); // toggle off
+            reactions[p.emoji].splice(idx, 1);
           } else {
-            // Remove user from any other emoji first (one reaction per user)
             for (const e of Object.keys(reactions)) {
               reactions[e] = reactions[e].filter((uid) => uid !== p.userId);
             }
@@ -180,21 +201,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const newJson = JSON.stringify(reactions);
           await storage.updateReactions(p.messageId, newJson);
 
-          // Broadcast to whole chat — need chatId from message
-          // We parse it from the first message fetch (simplified: broadcast to all connected)
-          wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-              client.send(JSON.stringify({ type: "reaction", payload: { messageId: p.messageId, reactions: newJson } }));
-            }
-          });
+          // Get chatId so we can broadcast correctly
+          const chatId = await storage.getMessageChatId(p.messageId);
+          if (chatId) {
+            const members = await storage.getChatMembers(chatId);
+            broadcast(clients, memberIds(members), {
+              type: "reaction",
+              payload: { messageId: p.messageId, chatId, reactions: newJson }
+            });
+          }
         }
 
-        // ── Delete message ───────────────────────────────────────────────
         if (type === "delete") {
           const p = WsDelete.parse(payload);
           await storage.deleteMessage(p.messageId);
           const members = await storage.getChatMembers(p.chatId);
           broadcast(clients, memberIds(members), { type: "delete", payload: p });
+        }
+
+        // Call signaling
+        if (type === "call") {
+          const p = WsCall.parse(payload);
+          const targetWs = clients.get(p.toUserId);
+          if (targetWs?.readyState === WebSocket.OPEN) {
+            targetWs.send(JSON.stringify({ type: "call", payload: p }));
+          }
+        }
+
+        // Contact request notification
+        if (type === "contact_request") {
+          const p = WsContactRequest.parse(payload);
+          const targetWs = clients.get(p.toUserId);
+          if (targetWs?.readyState === WebSocket.OPEN) {
+            targetWs.send(JSON.stringify({ type: "contact_request", payload: p }));
+          }
         }
 
       } catch (err) {
