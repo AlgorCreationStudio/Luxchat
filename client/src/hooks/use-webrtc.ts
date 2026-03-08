@@ -111,6 +111,8 @@ export function useWebRTC(
   // Buffer ICE candidates that arrive before remoteDescription is set
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
   const remoteDescSetRef = useRef(false);
+  // Buffer answer that may arrive before PC is created
+  const pendingAnswerRef = useRef<RTCSessionDescriptionInit | null>(null);
 
   const cleanup = useCallback((options?: { preservePendingIce?: boolean }) => {
     pcRef.current?.close();
@@ -121,6 +123,7 @@ export function useWebRTC(
       pendingIceRef.current = [];
     }
     remoteDescSetRef.current = false;
+    pendingAnswerRef.current = null;
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
     }
@@ -195,6 +198,21 @@ export function useWebRTC(
       await pc.setLocalDescription(offer);
       onNeedSignal('offer', offer);
       onStatusChange('calling');
+
+      // Flush any answer that arrived while we were setting up
+      if (pendingAnswerRef.current) {
+        const buffered = pendingAnswerRef.current;
+        pendingAnswerRef.current = null;
+        if (pc.signalingState === 'have-local-offer') {
+          await pc.setRemoteDescription(new RTCSessionDescription(buffered));
+          remoteDescSetRef.current = true;
+          for (const c of pendingIceRef.current) {
+            await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+          }
+          pendingIceRef.current = [];
+          onStatusChange('connected');
+        }
+      }
     } catch (error) {
       console.error('[WebRTC] Failed to start outgoing call', error);
       cleanup();
@@ -236,7 +254,10 @@ export function useWebRTC(
   const receiveAnswer = useCallback(async (answer: RTCSessionDescriptionInit) => {
     const pc = pcRef.current;
     if (!pc) {
-      throw new Error('No hay una llamada activa para aplicar la respuesta remota.');
+      // PC not ready yet — buffer the answer
+      console.warn('[WebRTC] receiveAnswer: PC not ready, buffering answer');
+      pendingAnswerRef.current = answer;
+      return;
     }
 
     // Guard: only apply if we're in the right state

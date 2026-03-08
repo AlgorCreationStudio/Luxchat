@@ -250,9 +250,8 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     setCallOpen(true);
 
     try {
-      // Send incoming FIRST so callee is ready before receiving the WebRTC offer
+      // Send incoming signal and start call simultaneously — answer is now buffered
       sendCall(targetId, 'incoming');
-      await new Promise(r => setTimeout(r, 300));
       await startCall();
     } catch (error) {
       console.error('[Call] Outgoing call startup failed', error);
