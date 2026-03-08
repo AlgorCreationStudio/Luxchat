@@ -33,11 +33,65 @@ export function getWebRTCErrorMessage(error: unknown): string {
   return 'Se produjo un error desconocido al iniciar la llamada.';
 }
 
+function normalizeIceServers(input: unknown): RTCIceServer[] {
+  const rawServers = Array.isArray(input)
+    ? input
+    : (typeof input === 'object' && input && 'iceServers' in input && Array.isArray((input as { iceServers?: unknown }).iceServers)
+      ? (input as { iceServers: unknown[] }).iceServers
+      : (typeof input === 'object'
+        && input
+        && 'v' in input
+        && typeof (input as { v?: unknown }).v === 'object'
+        && (input as { v?: { iceServers?: unknown } }).v
+        && Array.isArray((input as { v?: { iceServers?: unknown[] } }).v?.iceServers)
+          ? (input as { v: { iceServers: unknown[] } }).v.iceServers
+          : null));
+
+  if (!rawServers) {
+    return [{ urls: 'stun:stun.l.google.com:19302' }];
+  }
+
+  const normalized = rawServers.flatMap((server) => {
+    if (!server || typeof server !== 'object') return [];
+
+    const rawUrls = 'urls' in server
+      ? (server as { urls?: unknown }).urls
+      : (server as { url?: unknown }).url;
+
+    if (typeof rawUrls !== 'string' && !Array.isArray(rawUrls)) {
+      return [];
+    }
+
+    const urls = Array.isArray(rawUrls)
+      ? rawUrls.filter((value): value is string => typeof value === 'string' && value.length > 0)
+      : rawUrls;
+
+    if ((Array.isArray(urls) && urls.length === 0) || urls === '') {
+      return [];
+    }
+
+    return [{
+      urls,
+      username: typeof (server as { username?: unknown }).username === 'string'
+        ? (server as { username?: string }).username
+        : undefined,
+      credential: typeof (server as { credential?: unknown }).credential === 'string'
+        ? (server as { credential?: string }).credential
+        : undefined,
+    } satisfies RTCIceServer];
+  });
+
+  return normalized.length > 0 ? normalized : [{ urls: 'stun:stun.l.google.com:19302' }];
+}
+
 // ICE servers fetched from our own backend — credentials never exposed in client code
 async function getIceServers(): Promise<RTCIceServer[]> {
   try {
     const res = await fetch('/api/ice-servers');
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      return normalizeIceServers(data);
+    }
   } catch (e) {
     console.warn('[WebRTC] Failed to fetch ICE servers, using STUN only', e);
   }

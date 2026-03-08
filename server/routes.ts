@@ -29,6 +29,63 @@ const WsDelete = z.object({ messageId: z.number(), chatId: z.string() });
 const WsCall = z.object({ toUserId: z.string(), fromUserId: z.string(), fromName: z.string(), action: z.enum(["incoming", "answer", "reject", "end"]) });
 const WsContactRequest = z.object({ toUserId: z.string(), fromUserId: z.string(), fromName: z.string() });
 
+type SerializableIceServer = {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+};
+
+function normalizeIceServers(input: unknown): SerializableIceServer[] {
+  const rawServers = Array.isArray(input)
+    ? input
+    : (typeof input === 'object' && input && 'iceServers' in input && Array.isArray((input as { iceServers?: unknown }).iceServers)
+      ? (input as { iceServers: unknown[] }).iceServers
+      : (typeof input === 'object'
+        && input
+        && 'v' in input
+        && typeof (input as { v?: unknown }).v === 'object'
+        && (input as { v?: { iceServers?: unknown } }).v
+        && Array.isArray((input as { v?: { iceServers?: unknown[] } }).v?.iceServers)
+          ? (input as { v: { iceServers: unknown[] } }).v.iceServers
+          : null));
+
+  if (!rawServers) {
+    return [{ urls: 'stun:stun.l.google.com:19302' }];
+  }
+
+  const normalized = rawServers.flatMap((server) => {
+    if (!server || typeof server !== 'object') return [];
+
+    const rawUrls = 'urls' in server
+      ? (server as { urls?: unknown }).urls
+      : (server as { url?: unknown }).url;
+
+    if (typeof rawUrls !== 'string' && !Array.isArray(rawUrls)) {
+      return [];
+    }
+
+    const urls = Array.isArray(rawUrls)
+      ? rawUrls.filter((value): value is string => typeof value === 'string' && value.length > 0)
+      : rawUrls;
+
+    if ((Array.isArray(urls) && urls.length === 0) || urls === '') {
+      return [];
+    }
+
+    return [{
+      urls,
+      username: typeof (server as { username?: unknown }).username === 'string'
+        ? (server as { username?: string }).username
+        : undefined,
+      credential: typeof (server as { credential?: unknown }).credential === 'string'
+        ? (server as { credential?: string }).credential
+        : undefined,
+    } satisfies SerializableIceServer];
+  });
+
+  return normalized.length > 0 ? normalized : [{ urls: 'stun:stun.l.google.com:19302' }];
+}
+
 type ClientMap = Map<string, Set<WebSocket>>;
 
 function addClient(clients: ClientMap, userId: string, ws: WebSocket) {
@@ -191,8 +248,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         },
         body: JSON.stringify({ format: 'urls' }),
       });
-      const data = await r.json() as any;
-      if (data?.v?.iceServers) return res.json(data.v.iceServers);
+      const data = await r.json() as unknown;
+      return res.json(normalizeIceServers(data));
     } catch { /* fall through */ }
 
     res.json([{ urls: 'stun:stun.l.google.com:19302' }]);
