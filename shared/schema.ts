@@ -61,9 +61,9 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true, lastS
 export const insertMessageSchema = createInsertSchema(messages).omit({ id: true, createdAt: true });
 
 export type User = typeof users.$inferSelect;
-export type InsertUser = z.infer<typeof insertUserSchema>;
+export type InsertUser = typeof users.$inferInsert;
 export type Contact = typeof contacts.$inferSelect;
 export type Chat = typeof chats.$inferSelect;
 export type ChatMember = typeof chatMembers.$inferSelect;
 export type Message = typeof messages.$inferSelect;
-export type ChatWithMeta = Chat & { name?: string; avatarUrl?: string; lastMessage?: string; unread?: number };
+export type ChatWithMeta = Chat & { avatarUrl?: string | null; lastMessage?: string; unread?: number };

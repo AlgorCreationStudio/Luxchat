@@ -165,7 +165,7 @@ export function AddContactModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                     <p className="font-semibold text-foreground truncate">{found.displayName}</p>
                     <p className="text-xs font-mono text-muted-foreground">{found.tag}</p>
                   </div>
-                  <Button onClick={handleSendRequest} isLoading={addContact.isPending} size="sm" className="flex-shrink-0">
+                  <Button onClick={handleSendRequest} isLoading={addContact.isPending} className="flex-shrink-0">
                     Enviar
                   </Button>
                 </motion.div>

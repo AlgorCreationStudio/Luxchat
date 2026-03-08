@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
   users, contacts, chats, chatMembers, messages,
-  type User, type InsertUser, type Contact, type Chat, type ChatMember, type Message,
+  type User, type InsertUser, type Contact, type Chat, type ChatMember, type Message, type ChatWithMeta,
 } from "@shared/schema";
 import { eq, and, desc, ne, ilike } from "drizzle-orm";
 
@@ -127,7 +127,7 @@ export class DatabaseStorage {
     );
   }
 
-  async getUserChats(userId: string): Promise<(Chat & { name?: string; avatarUrl?: string; lastMessage?: string; unread?: number })[]> {
+  async getUserChats(userId: string): Promise<ChatWithMeta[]> {
     const memberships = await db.select().from(chatMembers).where(eq(chatMembers.userId, userId));
     if (memberships.length === 0) return [];
 

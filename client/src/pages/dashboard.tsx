@@ -28,12 +28,19 @@ export default function DashboardPage() {
   // Active call (answered incoming)
   const [activeCall, setActiveCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
   const [callStatus, setCallStatus] = useState<RTCStatus>('idle');
+  const incomingCallRef = useRef(incomingCall);
+  const activeCallRef = useRef(activeCall);
+  const receiverPeerIdRef = useRef('');
+  const answerRequestedRef = useRef(false);
 
   // WebRTC for the RECEIVER side — lives here so it survives modal mounts
   const handleSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
-    if (!activeCall) return;
-    sendWebRTCSignal(activeCall.fromUserId, type, data);
-  }, [activeCall, sendWebRTCSignal]);
+    const peerUserId = activeCallRef.current?.fromUserId
+      ?? incomingCallRef.current?.fromUserId
+      ?? receiverPeerIdRef.current;
+    if (!peerUserId) return;
+    sendWebRTCSignal(peerUserId, type, data);
+  }, [sendWebRTCSignal]);
 
   const { answerCall, receiveIce, hangUp, toggleMic, micOn } = useWebRTC(
     setCallStatus,
@@ -45,39 +52,71 @@ export default function DashboardPage() {
   }, [user, setLocation]);
 
   // Listen for incoming call signal
-  const incomingCallRef = useRef(incomingCall);
   useEffect(() => { incomingCallRef.current = incomingCall; }, [incomingCall]);
+  useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
+
+  const startAnswerCall = useCallback(async (offer: RTCSessionDescriptionInit) => {
+    try {
+      await answerCall(offer);
+      answerRequestedRef.current = false;
+    } catch {
+      answerRequestedRef.current = false;
+      setCallStatus('ended');
+    }
+  }, [answerCall]);
 
   useEffect(() => {
-    return on('call', (payload) => {
+    const unsubscribe = on('call', (payload) => {
       if (payload.action === 'incoming' && payload.toUserId === user?.id) {
+        receiverPeerIdRef.current = payload.fromUserId;
+        answerRequestedRef.current = false;
         setIncomingCall({ fromUserId: payload.fromUserId, fromName: payload.fromName });
       }
       if (payload.action === 'end') {
         setCallStatus('ended');
         setIncomingCall(null);
+        answerRequestedRef.current = false;
       }
       if (payload.action === 'reject') {
         setIncomingCall(null);
+        answerRequestedRef.current = false;
       }
     });
+    return () => {
+      unsubscribe();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, user?.id]);
 
   // Receive WebRTC offer and ICE candidates for the receiver
   useEffect(() => {
-    return on('webrtc_signal', (payload) => {
+    const unsubscribe = on('webrtc_signal', (payload) => {
+      const peerUserId = activeCallRef.current?.fromUserId
+        ?? incomingCallRef.current?.fromUserId
+        ?? receiverPeerIdRef.current;
+      if (peerUserId && payload.fromUserId !== peerUserId) return;
+
       if (payload.signalType === 'offer') {
-        // Attach offer to incomingCall
-        setIncomingCall((prev) =>
-          prev ? { ...prev, offer: payload.data as RTCSessionDescriptionInit } : prev
-        );
+        const offer = payload.data as RTCSessionDescriptionInit;
+        if (answerRequestedRef.current) {
+          void startAnswerCall(offer);
+          return;
+        }
+
+        // Attach offer to incomingCall until user answers.
+        setIncomingCall((prev) => {
+          if (!prev || prev.fromUserId !== payload.fromUserId) return prev;
+          return { ...prev, offer };
+        });
       }
       if (payload.signalType === 'ice') {
         receiveIce(payload.data as RTCIceCandidateInit);
       }
     });
-  }, [on, receiveIce]);
+    return () => {
+      unsubscribe();
+    };
+  }, [on, receiveIce, startAnswerCall]);
 
   if (!user) return null;
 
@@ -85,26 +124,38 @@ export default function DashboardPage() {
   const isChatOpen = match && params?.id;
 
   const handleAnswerCall = async () => {
-    if (!incomingCall) return;
-    sendCall(incomingCall.fromUserId, 'answer');
-    setActiveCall({ fromUserId: incomingCall.fromUserId, fromName: incomingCall.fromName });
+    const currentIncomingCall = incomingCallRef.current;
+    if (!currentIncomingCall) return;
+
+    answerRequestedRef.current = true;
+    receiverPeerIdRef.current = currentIncomingCall.fromUserId;
+    sendCall(currentIncomingCall.fromUserId, 'answer');
+    setActiveCall({ fromUserId: currentIncomingCall.fromUserId, fromName: currentIncomingCall.fromName });
     setCallStatus('calling');
     setIncomingCall(null);
-    if (incomingCall.offer) {
-      await answerCall(incomingCall.offer).catch(() => setCallStatus('ended'));
+
+    if (currentIncomingCall.offer) {
+      await startAnswerCall(currentIncomingCall.offer);
     }
   };
 
   const handleRejectCall = () => {
-    if (!incomingCall) return;
-    sendCall(incomingCall.fromUserId, 'reject');
+    const currentIncomingCall = incomingCallRef.current;
+    if (!currentIncomingCall) return;
+
+    receiverPeerIdRef.current = '';
+    answerRequestedRef.current = false;
+    sendCall(currentIncomingCall.fromUserId, 'reject');
     setIncomingCall(null);
   };
 
   const handleEndActiveCall = () => {
-    if (activeCall) {
-      sendCall(activeCall.fromUserId, 'end');
+    const currentActiveCall = activeCallRef.current;
+    if (currentActiveCall) {
+      sendCall(currentActiveCall.fromUserId, 'end');
     }
+    receiverPeerIdRef.current = '';
+    answerRequestedRef.current = false;
     hangUp();
     setActiveCall(null);
     setCallStatus('idle');

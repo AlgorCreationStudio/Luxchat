@@ -235,7 +235,9 @@ export function useWebSocket() {
   const on = useCallback(<K extends keyof WsEventMap>(event: K, fn: WsEventMap[K]) => {
     if (!listeners.has(event)) listeners.set(event, new Set());
     listeners.get(event)!.add(fn);
-    return () => listeners.get(event)?.delete(fn);
+    return () => {
+      listeners.get(event)?.delete(fn);
+    };
   }, []);
 
   return { sendMessage, sendAudio, sendTyping, sendRead, sendReaction, sendDelete, sendCall, sendContactRequestNotif, sendWebRTCSignal, on };

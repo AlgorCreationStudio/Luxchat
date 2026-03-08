@@ -23,7 +23,7 @@ interface Props {
 export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, onBack }: Props) {
   const user = useAuthStore((s) => s.user);
   const { data: rawMessages = [], isLoading } = useMessages(chatId);
-  const { sendMessage, sendAudio, sendTyping, sendRead, sendReact: sendReaction, sendDelete, sendCall, sendWebRTCSignal, on } = useWebSocket();
+  const { sendMessage, sendAudio, sendTyping, sendRead, sendReaction, sendDelete, sendCall, sendWebRTCSignal, on } = useWebSocket();
   const { state: recState, start: startRec, lock: lockRec, stop: stopRec, cancel: cancelRec } = useRecording();
   const markRead = useMarkRead();
   const { toast } = useToast();
