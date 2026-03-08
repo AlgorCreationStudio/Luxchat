@@ -128,6 +128,18 @@ export function useWebRTC(
     const iceServers = await getIceServers();
     const pc = new RTCPeerConnection({ iceServers });
     pcRef.current = pc;
+    let cleanedUpOnFailure = false;
+
+    const handleConnected = () => {
+      onStatusChange('connected');
+    };
+
+    const handleFailure = () => {
+      if (cleanedUpOnFailure) return;
+      cleanedUpOnFailure = true;
+      onStatusChange('ended');
+      cleanup();
+    };
 
     pc.onicecandidate = (e) => {
       if (e.candidate) onNeedSignal('ice', e.candidate);
@@ -136,12 +148,21 @@ export function useWebRTC(
     pc.onconnectionstatechange = () => {
       console.log('[WebRTC] connectionState:', pc.connectionState);
       if (pc.connectionState === 'connected') {
-        onStatusChange('connected');
+        handleConnected();
       }
       // Only treat 'failed' as ended — 'disconnected' is transient and may recover
       if (pc.connectionState === 'failed') {
-        onStatusChange('ended');
-        cleanup();
+        handleFailure();
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('[WebRTC] iceConnectionState:', pc.iceConnectionState);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        handleConnected();
+      }
+      if (pc.iceConnectionState === 'failed') {
+        handleFailure();
       }
     };
 
@@ -211,16 +232,29 @@ export function useWebRTC(
 
   // CALLER: receive answer from callee
   const receiveAnswer = useCallback(async (answer: RTCSessionDescriptionInit) => {
-    if (!pcRef.current) return;
-    await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-    remoteDescSetRef.current = true;
-
-    // Flush buffered ICE candidates
-    for (const c of pendingIceRef.current) {
-      await pcRef.current.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+    const pc = pcRef.current;
+    if (!pc) {
+      throw new Error('No hay una llamada activa para aplicar la respuesta remota.');
     }
-    pendingIceRef.current = [];
-  }, []);
+
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      remoteDescSetRef.current = true;
+
+      // Flush buffered ICE candidates
+      for (const c of pendingIceRef.current) {
+        await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+      }
+      pendingIceRef.current = [];
+
+      if (pc.connectionState === 'connected' || pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        onStatusChange('connected');
+      }
+    } catch (error) {
+      console.error('[WebRTC] Failed to apply remote answer', error);
+      throw error;
+    }
+  }, [onStatusChange]);
 
   // Both: receive ICE candidate — buffer if remoteDescription not set yet
   const receiveIce = useCallback(async (candidate: RTCIceCandidateInit) => {

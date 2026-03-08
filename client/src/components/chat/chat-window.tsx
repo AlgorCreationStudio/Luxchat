@@ -211,10 +211,20 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   useEffect(() => {
     return on('webrtc_signal', (payload) => {
       if (payload.fromUserId !== otherUserIdRef.current) return;
-      if (payload.signalType === 'answer') receiveAnswer(payload.data as RTCSessionDescriptionInit);
+      if (payload.signalType === 'answer') {
+        void receiveAnswer(payload.data as RTCSessionDescriptionInit).catch((error) => {
+          console.error('[Call] Failed to apply remote answer', error);
+          callerHangUp();
+          toast({
+            variant: 'destructive',
+            title: 'No se pudo conectar la llamada',
+            description: getWebRTCErrorMessage(error),
+          });
+        });
+      }
       if (payload.signalType === 'ice') callerReceiveIce(payload.data as RTCIceCandidateInit);
     });
-  }, [on, receiveAnswer, callerReceiveIce]);
+  }, [on, receiveAnswer, callerReceiveIce, callerHangUp, toast]);
 
   const handleCall = async () => {
     if (!otherUserId) return;
