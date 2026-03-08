@@ -135,6 +135,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(await storage.getChatMessages(req.params.id));
   });
 
+  // Get chat members
+  app.get("/api/chats/:id/members", async (req, res) => {
+    const members = await storage.getChatMembers(req.params.id);
+    const users = await Promise.all(members.map((m) => storage.getUser(m.userId)));
+    res.json(users.filter(Boolean));
+  });
+
   // Mark chat as read (explicit, not auto)
   app.post("/api/chats/:id/read", async (req, res) => {
     const { userId } = req.body;

@@ -164,6 +164,19 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1000); }
   }, []);
 
+  // Fetch chat members to get the other participant's userId
+  const [otherUserId, setOtherUserId] = React.useState('');
+  useEffect(() => {
+    if (!chatId || !user?.id) return;
+    fetch(`/api/chats/${chatId}/members`)
+      .then((r) => r.json())
+      .then((members: { id: string }[]) => {
+        const other = members.find((m) => m.id !== user.id);
+        if (other) setOtherUserId(other.id);
+      })
+      .catch(() => {});
+  }, [chatId, user?.id]);
+
   // Listen for call responses (answer/reject/end from the other side)
   useEffect(() => {
     return on('call', (payload) => {
@@ -173,14 +186,6 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
       if (payload.action === 'end') setCallStatus('ended');
     });
   }, [on, otherUserId]);
-
-  // The other participant's userId — for direct chats the chatId encodes both users
-  // We'll look it up from messages or pass it from parent; for now derive from chatId
-  const otherUserId = React.useMemo(() => {
-    // chatId format is "userId1_userId2" (sorted) — extract the other user
-    const parts = chatId.split('_');
-    return parts.find((p) => p !== user?.id) ?? '';
-  }, [chatId, user?.id]);
 
   const handleCall = () => {
     setCallStatus('calling');
