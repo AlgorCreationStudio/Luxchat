@@ -58,7 +58,18 @@ function connectSingleton(userId: string) {
   const ws = new WebSocket(`${protocol}//${window.location.host}/ws?userId=${userId}`);
   singletonSocket = ws;
 
-  ws.onopen = () => console.log('[WS] Connected');
+  ws.onopen = () => {
+    console.log('[WS] Connected');
+    // Keepalive ping every 20s to prevent Railway/proxy timeout
+    const ping = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      } else {
+        clearInterval(ping);
+      }
+    }, 20000);
+    (ws as any)._pingInterval = ping;
+  };
 
   ws.onmessage = (event) => {
     try {
@@ -71,6 +82,7 @@ function connectSingleton(userId: string) {
 
   ws.onclose = () => {
     console.log('[WS] Disconnected — reconnecting in 2s');
+    clearInterval((ws as any)._pingInterval);
     singletonSocket = null;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {

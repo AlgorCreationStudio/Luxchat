@@ -354,6 +354,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
 
         // Call signaling
+        if (type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
+
         if (type === "call") {
           const p = WsCall.parse(payload);
           sendToUser(clients, p.toUserId, { type: "call", payload: p });
