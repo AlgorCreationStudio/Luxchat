@@ -1,5 +1,38 @@
 import { useRef, useCallback, useState } from 'react';
 
+export function getWebRTCErrorMessage(error: unknown): string {
+  const name = typeof error === 'object' && error && 'name' in error
+    ? String((error as { name?: unknown }).name ?? '')
+    : '';
+  const message = error instanceof Error ? error.message : '';
+
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return 'El navegador bloqueó el micrófono. Permite el acceso al micrófono para llamar.';
+  }
+
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return 'No se encontró ningún micrófono disponible para iniciar la llamada.';
+  }
+
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'El micrófono está siendo usado por otra aplicación o pestaña.';
+  }
+
+  if (name === 'SecurityError') {
+    return 'Las llamadas requieren HTTPS o localhost para acceder al micrófono.';
+  }
+
+  if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+    return 'La configuración de audio no es compatible con este dispositivo.';
+  }
+
+  if (message) {
+    return message;
+  }
+
+  return 'Se produjo un error desconocido al iniciar la llamada.';
+}
+
 // ICE servers fetched from our own backend — credentials never exposed in client code
 async function getIceServers(): Promise<RTCIceServer[]> {
   try {
@@ -74,40 +107,52 @@ export function useWebRTC(
   // CALLER: initiate call
   const startCall = useCallback(async () => {
     cleanup();
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStreamRef.current = stream;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
 
-    const pc = await createPC();
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      const pc = await createPC();
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    onNeedSignal('offer', offer);
-    onStatusChange('calling');
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      onNeedSignal('offer', offer);
+      onStatusChange('calling');
+    } catch (error) {
+      console.error('[WebRTC] Failed to start outgoing call', error);
+      cleanup();
+      throw error;
+    }
   }, [createPC, cleanup, onNeedSignal, onStatusChange]);
 
   // CALLEE: receive offer and send answer
   const answerCall = useCallback(async (offer: RTCSessionDescriptionInit) => {
     cleanup();
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStreamRef.current = stream;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
 
-    const pc = await createPC();
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      const pc = await createPC();
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    remoteDescSetRef.current = true;
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      remoteDescSetRef.current = true;
 
-    // Flush any buffered ICE candidates
-    for (const c of pendingIceRef.current) {
-      await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+      // Flush any buffered ICE candidates
+      for (const c of pendingIceRef.current) {
+        await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+      }
+      pendingIceRef.current = [];
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      onNeedSignal('answer', answer);
+      onStatusChange('calling'); // caller will move to connected via connectionstatechange
+    } catch (error) {
+      console.error('[WebRTC] Failed to answer incoming call', error);
+      cleanup();
+      throw error;
     }
-    pendingIceRef.current = [];
-
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    onNeedSignal('answer', answer);
-    onStatusChange('calling'); // caller will move to connected via connectionstatechange
   }, [createPC, cleanup, onNeedSignal, onStatusChange]);
 
   // CALLER: receive answer from callee

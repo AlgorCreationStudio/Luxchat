@@ -8,11 +8,13 @@ import { IncomingCallModal } from '@/components/modals/incoming-call-modal';
 import { CallModal } from '@/components/modals/call-modal';
 import { useChats } from '@/hooks/use-api';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { useWebRTC, RTCStatus } from '@/hooks/use-webrtc';
+import { getWebRTCErrorMessage, useWebRTC, RTCStatus } from '@/hooks/use-webrtc';
+import { useToast } from '@/hooks/use-toast';
 import { MessageSquareDashed } from 'lucide-react';
 
 export default function DashboardPage() {
   const user = useAuthStore(s => s.user);
+  const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [match, params] = useRoute('/chat/:id');
   const { data: chats = [] } = useChats(user?.id);
@@ -62,11 +64,16 @@ export default function DashboardPage() {
     try {
       await answerCall(offer);
       answerRequestedRef.current = false;
-    } catch {
+    } catch (error) {
       answerRequestedRef.current = false;
       setCallStatus('ended');
+      toast({
+        variant: 'destructive',
+        title: 'No se pudo responder la llamada',
+        description: getWebRTCErrorMessage(error),
+      });
     }
-  }, [answerCall]);
+  }, [answerCall, toast]);
 
   useEffect(() => {
     const unsubscribe = on('call', (payload) => {

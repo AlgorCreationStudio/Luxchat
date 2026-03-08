@@ -3,7 +3,7 @@ import { Send, Phone, Mic, Paperclip, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '@/store/use-auth-store';
 import { useMessages, useMarkRead } from '@/hooks/use-api';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { useWebRTC } from '@/hooks/use-webrtc';
+import { getWebRTCErrorMessage, useWebRTC } from '@/hooks/use-webrtc';
 import { useRecording } from '@/hooks/use-recording';
 import { Avatar } from '../ui-library';
 import { MessageBubble } from './message-bubble';
@@ -225,14 +225,15 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     try {
       await startCall();
       sendCall(otherUserId, 'incoming');
-    } catch {
+    } catch (error) {
+      console.error('[Call] Outgoing call startup failed', error);
       callerHangUp();
       setCallOpen(false);
       setCallStatus('idle');
       toast({
         variant: 'destructive',
         title: 'No se pudo iniciar la llamada',
-        description: 'Verifica el micrófono o tu conexión y vuelve a intentarlo.',
+        description: getWebRTCErrorMessage(error),
       });
     }
   };
