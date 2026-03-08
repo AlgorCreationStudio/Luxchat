@@ -18,16 +18,16 @@ export default function DashboardPage() {
   const { on, sendCall } = useWebSocket();
 
   const [incomingCall, setIncomingCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
+  const [incomingOffer, setIncomingOffer] = useState<RTCSessionDescriptionInit | null>(null);
   // Answered incoming call shown in CallModal
   const [answeredCall, setAnsweredCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
-  const [answeredCallStatus, setAnsweredCallStatus] = useState<'calling' | 'connected' | 'rejected' | 'ended'>('connected');
+  const [answeredCallStatus, setAnsweredCallStatus] = useState<import('@/hooks/use-webrtc').RTCStatus>('calling');
 
   useEffect(() => {
     if (!user) setLocation('/');
   }, [user, setLocation]);
 
   // Listen for incoming calls & call lifecycle events
-  // Use refs to avoid stale closures that cause the listener to re-register
   const answeredCallRef = useRef<{ fromUserId: string; fromName: string } | null>(null);
   useEffect(() => { answeredCallRef.current = answeredCall; }, [answeredCall]);
 
@@ -46,6 +46,15 @@ export default function DashboardPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, user?.id]);
 
+  // Receive WebRTC offer from caller
+  useEffect(() => {
+    return on('webrtc_signal', (payload) => {
+      if (payload.signalType === 'offer') {
+        setIncomingOffer(payload.data as RTCSessionDescriptionInit);
+      }
+    });
+  }, [on]);
+
   if (!user) return null;
 
   const activeChat = chats.find(c => c.id === params?.id);
@@ -55,7 +64,7 @@ export default function DashboardPage() {
     if (!incomingCall) return;
     sendCall(incomingCall.fromUserId, 'answer');
     setAnsweredCall(incomingCall);
-    setAnsweredCallStatus('connected');
+    setAnsweredCallStatus('calling');
     setIncomingCall(null);
   };
 
@@ -92,7 +101,10 @@ export default function DashboardPage() {
           isOpen={!!answeredCall}
           onClose={handleEndAnsweredCall}
           contactName={answeredCall.fromName}
+          contactId={answeredCall.fromUserId}
           callStatus={answeredCallStatus}
+          setCallStatus={setAnsweredCallStatus}
+          incomingOffer={incomingOffer}
         />
       )}
 

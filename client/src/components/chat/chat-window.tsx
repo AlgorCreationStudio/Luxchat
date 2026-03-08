@@ -31,7 +31,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const [replyTo, setReplyTo] = useState<(Message & { senderName: string }) | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [isCallOpen, setCallOpen] = useState(false);
-  const [callStatus, setCallStatus] = useState<'calling' | 'connected' | 'rejected' | 'ended'>('calling');
+  const [callStatus, setCallStatus] = useState<import('@/hooks/use-webrtc').RTCStatus>('idle');
   const [lockProgress, setLockProgress] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -197,10 +197,10 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   }, [on, otherUserId]);
 
   const handleCall = () => {
-    setCallStatus('calling');
     if (otherUserId) {
       sendCall(otherUserId, 'incoming');
     }
+    setCallStatus('idle');
     setCallOpen(true);
   };
 
@@ -329,7 +329,15 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
         </div>
       </div>
 
-      <CallModal isOpen={isCallOpen} onClose={handleEndCall} contactName={chatName} callStatus={callStatus} />
+      <CallModal
+        isOpen={isCallOpen}
+        onClose={handleEndCall}
+        contactName={chatName}
+        contactId={otherUserId}
+        callStatus={callStatus}
+        setCallStatus={setCallStatus}
+        incomingOffer={null}
+      />
     </div>
   );
 }

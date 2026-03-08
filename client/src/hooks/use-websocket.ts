@@ -10,13 +10,15 @@ type WsIncoming =
   | { type: 'reaction'; payload: { messageId: number; chatId: string; reactions: string } }
   | { type: 'delete'; payload: { messageId: number; chatId: string } }
   | { type: 'call'; payload: { toUserId: string; fromUserId: string; fromName: string; action: string } }
-  | { type: 'contact_request'; payload: { fromUserId: string; fromName: string } };
+  | { type: 'contact_request'; payload: { fromUserId: string; fromName: string } }
+  | { type: 'webrtc_signal'; payload: { fromUserId: string; signalType: 'offer' | 'answer' | 'ice'; data: unknown } };
 
 type WsEventMap = {
   typing: (payload: { chatId: string; userId: string; isTyping: boolean; name: string }) => void;
   read: (payload: { chatId: string; readBy: string }) => void;
   call: (payload: { toUserId: string; fromUserId: string; fromName: string; action: string }) => void;
   contact_request: (payload: { fromUserId: string; fromName: string }) => void;
+  webrtc_signal: (payload: { fromUserId: string; signalType: 'offer' | 'answer' | 'ice'; data: unknown }) => void;
 };
 
 const listeners = new Map<string, Set<Function>>();
@@ -128,6 +130,10 @@ export function useWebSocket() {
           }
         }
 
+        if (msg.type === 'webrtc_signal') {
+          listeners.get('webrtc_signal')?.forEach((fn) => fn(msg.payload));
+        }
+
         if (msg.type === 'contact_request') {
           listeners.get('contact_request')?.forEach((fn) => fn(msg.payload));
           queryClient.invalidateQueries({ queryKey: ['pending-requests', user.id] });
@@ -216,6 +222,11 @@ export function useWebSocket() {
     send({ type: 'call', payload: { toUserId, fromUserId: user.id, fromName: user.displayName, action } });
   }, [user, send]);
 
+  const sendWebRTCSignal = useCallback((toUserId: string, signalType: 'offer' | 'answer' | 'ice', data: unknown) => {
+    if (!user) return;
+    send({ type: 'webrtc_signal', payload: { toUserId, fromUserId: user.id, signalType, data } });
+  }, [user, send]);
+
   const sendContactRequestNotif = useCallback((toUserId: string) => {
     if (!user) return;
     send({ type: 'contact_request', payload: { toUserId, fromUserId: user.id, fromName: user.displayName } });
@@ -227,5 +238,5 @@ export function useWebSocket() {
     return () => listeners.get(event)?.delete(fn);
   }, []);
 
-  return { sendMessage, sendAudio, sendTyping, sendRead, sendReaction, sendDelete, sendCall, sendContactRequestNotif, on };
+  return { sendMessage, sendAudio, sendTyping, sendRead, sendReaction, sendDelete, sendCall, sendContactRequestNotif, sendWebRTCSignal, on };
 }

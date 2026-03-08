@@ -135,6 +135,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(await storage.getChatMessages(req.params.id));
   });
 
+  // Xirsys ICE servers — credentials stay server-side
+  app.get('/api/ice-servers', async (req, res) => {
+    const ident   = process.env.XIRSYS_IDENT;
+    const secret  = process.env.XIRSYS_SECRET;
+    const channel = process.env.XIRSYS_CHANNEL || 'LuxChat';
+
+    if (!ident || !secret) {
+      // Fallback: Google STUN only
+      return res.json([{ urls: 'stun:stun.l.google.com:19302' }]);
+    }
+
+    try {
+      const r = await fetch(`https://global.xirsys.net/_turn/${channel}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Basic ' + Buffer.from(`${ident}:${secret}`).toString('base64'),
+        },
+        body: JSON.stringify({ format: 'urls' }),
+      });
+      const data = await r.json() as any;
+      if (data?.v?.iceServers) return res.json(data.v.iceServers);
+    } catch { /* fall through */ }
+
+    res.json([{ urls: 'stun:stun.l.google.com:19302' }]);
+  });
+
   // Get chat members
   app.get("/api/chats/:id/members", async (req, res) => {
     const members = await storage.getChatMembers(req.params.id);
@@ -243,6 +270,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
 
         // Contact request notification
+        if (type === "webrtc_signal") {
+          const targetWs = clients.get(payload.toUserId);
+          if (targetWs?.readyState === WebSocket.OPEN) {
+            targetWs.send(JSON.stringify({ type: "webrtc_signal", payload }));
+          }
+        }
+
         if (type === "contact_request") {
           const p = WsContactRequest.parse(payload);
           const targetWs = clients.get(p.toUserId);
