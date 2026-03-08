@@ -126,6 +126,11 @@ export function useWebRTC(
     pendingAnswerRef.current = null;
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
+      remoteAudioRef.current.pause();
+      if (remoteAudioRef.current.parentNode) {
+        remoteAudioRef.current.parentNode.removeChild(remoteAudioRef.current);
+      }
+      remoteAudioRef.current = null;
     }
   }, []);
 
@@ -173,12 +178,17 @@ export function useWebRTC(
 
     pc.ontrack = (e) => {
       if (!remoteAudioRef.current) {
-        remoteAudioRef.current = new Audio();
-        remoteAudioRef.current.autoplay = true;
+        const audio = document.createElement('audio');
+        audio.autoplay = true;
+        audio.setAttribute('playsinline', '');  // iOS requires this
+        audio.style.display = 'none';
+        document.body.appendChild(audio);       // must be in DOM for mobile
+        remoteAudioRef.current = audio;
       }
       remoteAudioRef.current.srcObject = e.streams[0];
-      // Resume audio context on mobile if needed
-      remoteAudioRef.current.play().catch(() => {});
+      remoteAudioRef.current.play().catch((err) => {
+        console.error('[WebRTC] Audio play failed:', err);
+      });
     };
 
     return pc;
