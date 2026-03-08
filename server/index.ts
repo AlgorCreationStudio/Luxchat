@@ -4,6 +4,15 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { registerAuthRoutes } from "./auth";
 import { createServer } from "http";
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Build version: use the mtime of this file as a stable hash per deploy
+const BUILD_VERSION = process.env.BUILD_VERSION || Date.now().toString();
 
 const app = express();
 const httpServer = createServer(app);
@@ -63,6 +72,12 @@ app.use((req, res, next) => {
 
 (async () => {
   registerAuthRoutes(app);
+
+  // Version endpoint — clients poll this to detect new deploys
+  app.get("/api/version", (_req, res) => {
+    res.json({ version: BUILD_VERSION });
+  });
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

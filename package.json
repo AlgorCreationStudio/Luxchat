@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server/index.ts",
-    "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist --out-extension:.js=.js",
+    "build": "vite build && BUILD_VERSION=$(date +%s) esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist --define:process.env.BUILD_VERSION='\"'$BUILD_VERSION'\"'",
     "start": "NODE_ENV=production node dist/index.js",
     "db:push": "dotenv -e .env -- drizzle-kit push"
   },

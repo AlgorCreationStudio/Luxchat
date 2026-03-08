@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuthStore } from "@/store/use-auth-store";
 import { InstallPrompt } from "@/components/install-prompt";
+import { UpdateBanner } from "@/components/update-banner";
 
 // Pages
 import AuthPage from "@/pages/auth";
@@ -31,6 +32,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
+        <UpdateBanner />
         <InstallPrompt />
         <Router />
       </TooltipProvider>
