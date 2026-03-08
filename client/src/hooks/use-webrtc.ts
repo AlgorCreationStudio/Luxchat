@@ -21,12 +21,17 @@ export function useWebRTC(
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const [micOn, setMicOnState] = useState(true);
+  // Buffer ICE candidates that arrive before remoteDescription is set
+  const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
+  const remoteDescSetRef = useRef(false);
 
   const cleanup = useCallback(() => {
     pcRef.current?.close();
     pcRef.current = null;
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
+    pendingIceRef.current = [];
+    remoteDescSetRef.current = false;
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
     }
@@ -42,8 +47,12 @@ export function useWebRTC(
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'connected') onStatusChange('connected');
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+      console.log('[WebRTC] connectionState:', pc.connectionState);
+      if (pc.connectionState === 'connected') {
+        onStatusChange('connected');
+      }
+      // Only treat 'failed' as ended — 'disconnected' is transient and may recover
+      if (pc.connectionState === 'failed') {
         onStatusChange('ended');
         cleanup();
       }
@@ -55,6 +64,8 @@ export function useWebRTC(
         remoteAudioRef.current.autoplay = true;
       }
       remoteAudioRef.current.srcObject = e.streams[0];
+      // Resume audio context on mobile if needed
+      remoteAudioRef.current.play().catch(() => {});
     };
 
     return pc;
@@ -85,21 +96,39 @@ export function useWebRTC(
     stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    remoteDescSetRef.current = true;
+
+    // Flush any buffered ICE candidates
+    for (const c of pendingIceRef.current) {
+      await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+    }
+    pendingIceRef.current = [];
+
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     onNeedSignal('answer', answer);
-    onStatusChange('connected');
+    onStatusChange('calling'); // caller will move to connected via connectionstatechange
   }, [createPC, cleanup, onNeedSignal, onStatusChange]);
 
   // CALLER: receive answer from callee
   const receiveAnswer = useCallback(async (answer: RTCSessionDescriptionInit) => {
     if (!pcRef.current) return;
     await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+    remoteDescSetRef.current = true;
+
+    // Flush buffered ICE candidates
+    for (const c of pendingIceRef.current) {
+      await pcRef.current.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+    }
+    pendingIceRef.current = [];
   }, []);
 
-  // Both: receive ICE candidate
+  // Both: receive ICE candidate — buffer if remoteDescription not set yet
   const receiveIce = useCallback(async (candidate: RTCIceCandidateInit) => {
-    if (!pcRef.current) return;
+    if (!pcRef.current || !remoteDescSetRef.current) {
+      pendingIceRef.current.push(candidate);
+      return;
+    }
     try {
       await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (e) {

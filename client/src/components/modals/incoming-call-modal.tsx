@@ -11,12 +11,37 @@ interface IncomingCallModalProps {
 }
 
 export function IncomingCallModal({ callerName, callerId, onAnswer, onReject }: IncomingCallModalProps) {
-  useEffect(() => {
-    let stopped = false;
-    let timeoutId: ReturnType<typeof setTimeout>;
+  const ringingRef = useRef(false);
 
+  useEffect(() => {
+    ringingRef.current = true;
+
+    // Show system notification so user sees it even with app in background
+    const showCallNotification = async () => {
+      if ('serviceWorker' in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          await reg.showNotification(`📞 Llamada de ${callerName}`, {
+            body: 'Toca para contestar en LuxChat',
+            icon: '/icon-192.png',
+            badge: '/icon-192.png',
+            tag: 'incoming-call',
+            renotify: true,
+          } as any);
+        } catch { /* no SW support */ }
+      } else if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(`📞 Llamada de ${callerName}`, {
+          body: 'Toca para contestar en LuxChat',
+          icon: '/icon-192.png',
+        });
+      }
+    };
+    showCallNotification();
+
+    // Ringtone using AudioContext — repeated beep
+    let timeoutId: ReturnType<typeof setTimeout>;
     const beep = () => {
-      if (stopped) return;
+      if (!ringingRef.current) return;
       try {
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const osc = ctx.createOscillator();
@@ -25,29 +50,33 @@ export function IncomingCallModal({ callerName, callerId, onAnswer, onReject }: 
         gain.connect(ctx.destination);
         osc.frequency.setValueAtTime(480, ctx.currentTime);
         osc.frequency.setValueAtTime(620, ctx.currentTime + 0.3);
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+        gain.gain.setValueAtTime(0.35, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.85);
         osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.8);
-        setTimeout(() => ctx.close().catch(() => {}), 900);
-      } catch {
-        // AudioContext blocked — silent fallback
-      }
-      if (!stopped) timeoutId = setTimeout(beep, 1400);
+        osc.stop(ctx.currentTime + 0.85);
+        setTimeout(() => ctx.close().catch(() => {}), 950);
+      } catch { /* blocked */ }
+      if (ringingRef.current) timeoutId = setTimeout(beep, 1400);
     };
+    timeoutId = setTimeout(beep, 80);
 
-    timeoutId = setTimeout(beep, 100);
-    return () => { stopped = true; clearTimeout(timeoutId); };
-  }, []);
+    return () => {
+      ringingRef.current = false;
+      clearTimeout(timeoutId);
+      // Dismiss the notification when call is answered/rejected
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.ready.then((reg) =>
+          reg.getNotifications({ tag: 'incoming-call' }).then((ns) => ns.forEach((n) => n.close()))
+        ).catch(() => {});
+      }
+    };
+  }, [callerName]);
 
   return (
     <>
-      {/* ── MOBILE: full-screen overlay with bottom sheet feel ── */}
+      {/* ── MOBILE: fullscreen native-style ── */}
       <div className="md:hidden fixed inset-0 z-[100] flex flex-col">
-        {/* Dark backdrop */}
         <div className="absolute inset-0 bg-black/80 backdrop-blur-md" />
-
-        {/* Content centered vertically */}
         <motion.div
           initial={{ opacity: 0, scale: 0.92 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -59,26 +88,20 @@ export function IncomingCallModal({ callerName, callerId, onAnswer, onReject }: 
             paddingBottom: 'max(3rem, env(safe-area-inset-bottom))',
           }}
         >
-          {/* Top: caller info */}
           <div className="flex flex-col items-center gap-5 mt-8">
             <p className="text-sm text-white/50 uppercase tracking-widest">Llamada entrante</p>
-
-            {/* Avatar with pulse */}
             <div className="relative">
               <div className="absolute inset-0 rounded-full bg-green-500/20 animate-ping scale-125" />
               <div className="absolute inset-0 rounded-full bg-green-500/10 animate-ping scale-150" style={{ animationDelay: '0.3s' }} />
               <Avatar fallback={callerName} size="xl" className="w-28 h-28 text-4xl relative z-10 ring-4 ring-white/10" />
             </div>
-
             <div className="text-center">
               <h2 className="text-3xl font-display font-bold text-white">{callerName}</h2>
               <p className="text-white/40 text-sm mt-1">LuxChat</p>
             </div>
           </div>
 
-          {/* Bottom: big action buttons */}
           <div className="flex items-end justify-between w-full max-w-xs">
-            {/* Reject */}
             <div className="flex flex-col items-center gap-3">
               <button
                 onClick={onReject}
@@ -88,8 +111,6 @@ export function IncomingCallModal({ callerName, callerId, onAnswer, onReject }: 
               </button>
               <span className="text-white/50 text-sm">Rechazar</span>
             </div>
-
-            {/* Answer */}
             <div className="flex flex-col items-center gap-3">
               <button
                 onClick={onAnswer}
@@ -117,12 +138,10 @@ export function IncomingCallModal({ callerName, callerId, onAnswer, onReject }: 
             </div>
             <Avatar fallback={callerName} size="xl" className="w-16 h-16 text-2xl relative z-10" />
           </div>
-
           <div className="text-center mb-6">
             <p className="text-xs text-secondary/70 uppercase tracking-widest mb-1">Llamada entrante</p>
             <h3 className="text-xl font-display font-bold text-foreground">{callerName}</h3>
           </div>
-
           <div className="flex items-center justify-center gap-8">
             <button
               onClick={onReject}

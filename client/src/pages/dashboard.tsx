@@ -17,10 +17,9 @@ export default function DashboardPage() {
   const { data: chats = [] } = useChats(user?.id);
   const { on, sendCall } = useWebSocket();
 
-  const [incomingCall, setIncomingCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
-  const [incomingOffer, setIncomingOffer] = useState<RTCSessionDescriptionInit | null>(null);
+  const [incomingCall, setIncomingCall] = useState<{ fromUserId: string; fromName: string; offer?: RTCSessionDescriptionInit } | null>(null);
   // Answered incoming call shown in CallModal
-  const [answeredCall, setAnsweredCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
+  const [answeredCall, setAnsweredCall] = useState<{ fromUserId: string; fromName: string; offer?: RTCSessionDescriptionInit } | null>(null);
   const [answeredCallStatus, setAnsweredCallStatus] = useState<import('@/hooks/use-webrtc').RTCStatus>('calling');
 
   useEffect(() => {
@@ -46,11 +45,13 @@ export default function DashboardPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, user?.id]);
 
-  // Receive WebRTC offer from caller
+  // Attach WebRTC offer to the incoming call when it arrives
   useEffect(() => {
     return on('webrtc_signal', (payload) => {
       if (payload.signalType === 'offer') {
-        setIncomingOffer(payload.data as RTCSessionDescriptionInit);
+        setIncomingCall((prev) =>
+          prev ? { ...prev, offer: payload.data as RTCSessionDescriptionInit } : prev
+        );
       }
     });
   }, [on]);
@@ -104,7 +105,7 @@ export default function DashboardPage() {
           contactId={answeredCall.fromUserId}
           callStatus={answeredCallStatus}
           setCallStatus={setAnsweredCallStatus}
-          incomingOffer={incomingOffer}
+          incomingOffer={answeredCall?.offer ?? null}
         />
       )}
 
