@@ -1,82 +1,42 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PhoneOff, Mic, MicOff } from 'lucide-react';
 import { Avatar } from '../ui-library';
-import { useWebRTC, RTCStatus } from '@/hooks/use-webrtc';
-import { useWebSocket } from '@/hooks/use-websocket';
+import type { RTCStatus } from '@/hooks/use-webrtc';
 
 export function CallModal({
   isOpen,
   onClose,
   contactName,
-  contactId,
   callStatus,
-  setCallStatus,
-  incomingOffer,
+  micOn,
+  onToggleMic,
 }: {
   isOpen: boolean;
   onClose: () => void;
   contactName: string;
-  contactId: string;
   callStatus: RTCStatus;
-  setCallStatus: (s: RTCStatus) => void;
-  incomingOffer?: RTCSessionDescriptionInit | null;
+  micOn: boolean;
+  onToggleMic: () => void;
 }) {
-  const { sendWebRTCSignal, on } = useWebSocket();
   const status = callStatus;
 
-  const handleSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
-    sendWebRTCSignal(contactId, type, data);
-  }, [contactId, sendWebRTCSignal]);
-
-  const { startCall, answerCall, receiveAnswer, receiveIce, hangUp, toggleMic, micOn } = useWebRTC(
-    setCallStatus,
-    handleSignal,
-  );
-
-  // Start or answer call when modal opens
-  useEffect(() => {
-    if (!isOpen) return;
-    if (incomingOffer) {
-      answerCall(incomingOffer).catch(() => setCallStatus('ended'));
-    } else {
-      startCall().catch(() => setCallStatus('ended'));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
-
-  // Listen for WebRTC signals from the other peer
-  useEffect(() => {
-    return on('webrtc_signal', (payload) => {
-      if (payload.fromUserId !== contactId) return;
-      if (payload.signalType === 'answer') receiveAnswer(payload.data as RTCSessionDescriptionInit);
-      if (payload.signalType === 'ice') receiveIce(payload.data as RTCIceCandidateInit);
-    });
-  }, [on, contactId, receiveAnswer, receiveIce]);
-
-  // Auto-close on ended/rejected
   useEffect(() => {
     if (status === 'rejected' || status === 'ended') {
-      hangUp();
       const t = setTimeout(onClose, 2800);
       return () => clearTimeout(t);
     }
-  }, [status, onClose, hangUp]);
-
-  const handleHangUp = () => {
-    hangUp();
-    onClose();
-  };
+  }, [status, onClose]);
 
   const elapsed = useElapsed(status === 'connected');
 
-  const statusLabel = {
-    idle: '',
+  const statusLabel: Record<RTCStatus, string> = {
+    idle: 'Iniciando...',
     calling: 'Llamando...',
     connected: formatTime(elapsed),
     rejected: 'Llamada rechazada',
     ended: 'Llamada finalizada',
-  }[status];
+  };
 
   return (
     <AnimatePresence>
@@ -117,14 +77,14 @@ export function CallModal({
                       ? 'text-green-400'
                       : 'text-muted-foreground'
                 }`}>
-                  {statusLabel}
+                  {statusLabel[status]}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-6 bg-card/40 p-4 rounded-full border border-white/5 backdrop-blur-md">
               <button
-                onClick={toggleMic}
+                onClick={onToggleMic}
                 disabled={status !== 'connected'}
                 className={`w-14 h-14 rounded-full flex items-center justify-center transition-all disabled:opacity-30 ${
                   micOn ? 'bg-white/10 hover:bg-white/20 text-foreground' : 'bg-destructive/20 text-destructive'
@@ -134,13 +94,12 @@ export function CallModal({
               </button>
 
               <button
-                onClick={handleHangUp}
+                onClick={onClose}
                 className="w-20 h-20 rounded-full bg-destructive flex items-center justify-center hover:bg-destructive/90 hover:scale-105 transition-all shadow-lg shadow-destructive/30"
               >
                 <PhoneOff className="w-8 h-8 text-white" />
               </button>
 
-              {/* Spacer to keep layout balanced */}
               <div className="w-14 h-14" />
             </div>
           </motion.div>

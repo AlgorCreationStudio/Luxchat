@@ -3,6 +3,7 @@ import { Send, Phone, Mic, Paperclip, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '@/store/use-auth-store';
 import { useMessages, useMarkRead } from '@/hooks/use-api';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { useWebRTC } from '@/hooks/use-webrtc';
 import { useRecording } from '@/hooks/use-recording';
 import { Avatar } from '../ui-library';
 import { MessageBubble } from './message-bubble';
@@ -22,7 +23,7 @@ interface Props {
 export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, onBack }: Props) {
   const user = useAuthStore((s) => s.user);
   const { data: rawMessages = [], isLoading } = useMessages(chatId);
-  const { sendMessage, sendAudio, sendTyping, sendRead, sendReact: sendReaction, sendDelete, sendCall, on } = useWebSocket();
+  const { sendMessage, sendAudio, sendTyping, sendRead, sendReact: sendReaction, sendDelete, sendCall, sendWebRTCSignal, on } = useWebSocket();
   const { state: recState, start: startRec, lock: lockRec, stop: stopRec, cancel: cancelRec } = useRecording();
   const markRead = useMarkRead();
   const { toast } = useToast();
@@ -32,6 +33,17 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [isCallOpen, setCallOpen] = useState(false);
   const [callStatus, setCallStatus] = useState<import('@/hooks/use-webrtc').RTCStatus>('idle');
+  const otherUserIdRef = React.useRef('');
+
+  // WebRTC caller — hook lives here so it persists across modal re-renders
+  const handleCallerSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
+    if (otherUserIdRef.current) sendWebRTCSignal(otherUserIdRef.current, type, data);
+  }, [sendWebRTCSignal]);
+
+  const { startCall, receiveAnswer, receiveIce: callerReceiveIce, hangUp: callerHangUp, toggleMic: callerToggleMic, micOn: callerMicOn } = useWebRTC(
+    setCallStatus,
+    handleCallerSignal,
+  );
   const [lockProgress, setLockProgress] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -181,7 +193,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
       .then((r) => r.json())
       .then((members: { id: string }[]) => {
         const other = members.find((m) => m.id !== user.id);
-        if (other) setOtherUserId(other.id);
+        if (other) { setOtherUserId(other.id); otherUserIdRef.current = other.id; }
       })
       .catch(() => {});
   }, [chatId, user?.id]);
@@ -189,26 +201,34 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   // Listen for call responses (answer/reject/end from the other side)
   useEffect(() => {
     return on('call', (payload) => {
-      if (payload.fromUserId !== otherUserId && payload.toUserId !== otherUserId) return;
-      if (payload.action === 'answer') setCallStatus('connected');
+      if (payload.fromUserId !== otherUserIdRef.current && payload.toUserId !== otherUserIdRef.current) return;
       if (payload.action === 'reject') setCallStatus('rejected');
-      if (payload.action === 'end') setCallStatus('ended');
+      if (payload.action === 'end') { setCallStatus('ended'); callerHangUp(); }
     });
-  }, [on, otherUserId]);
+  }, [on, callerHangUp]);
 
-  const handleCall = () => {
-    if (otherUserId) {
-      sendCall(otherUserId, 'incoming');
-    }
-    setCallStatus('idle');
+  // Receive WebRTC signals for the CALLER (answer + ICE from the callee)
+  useEffect(() => {
+    return on('webrtc_signal', (payload) => {
+      if (payload.fromUserId !== otherUserIdRef.current) return;
+      if (payload.signalType === 'answer') receiveAnswer(payload.data as RTCSessionDescriptionInit);
+      if (payload.signalType === 'ice') callerReceiveIce(payload.data as RTCIceCandidateInit);
+    });
+  }, [on, receiveAnswer, callerReceiveIce]);
+
+  const handleCall = async () => {
+    if (!otherUserId) return;
+    setCallStatus('calling');
     setCallOpen(true);
+    sendCall(otherUserId, 'incoming');
+    await startCall().catch(() => setCallStatus('ended'));
   };
 
   const handleEndCall = () => {
-    if (otherUserId) {
-      sendCall(otherUserId, 'end');
-    }
+    if (otherUserId) sendCall(otherUserId, 'end');
+    callerHangUp();
     setCallOpen(false);
+    setCallStatus('idle');
   };
 
   return (
@@ -333,10 +353,9 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
         isOpen={isCallOpen}
         onClose={handleEndCall}
         contactName={chatName}
-        contactId={otherUserId}
         callStatus={callStatus}
-        setCallStatus={setCallStatus}
-        incomingOffer={null}
+        micOn={callerMicOn}
+        onToggleMic={callerToggleMic}
       />
     </div>
   );

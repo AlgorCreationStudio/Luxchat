@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation, useRoute } from 'wouter';
 import { AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '@/store/use-auth-store';
@@ -8,6 +8,7 @@ import { IncomingCallModal } from '@/components/modals/incoming-call-modal';
 import { CallModal } from '@/components/modals/call-modal';
 import { useChats } from '@/hooks/use-api';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { useWebRTC, RTCStatus } from '@/hooks/use-webrtc';
 import { MessageSquareDashed } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -15,58 +16,83 @@ export default function DashboardPage() {
   const [, setLocation] = useLocation();
   const [match, params] = useRoute('/chat/:id');
   const { data: chats = [] } = useChats(user?.id);
-  const { on, sendCall } = useWebSocket();
+  const { on, sendCall, sendWebRTCSignal } = useWebSocket();
 
-  const [incomingCall, setIncomingCall] = useState<{ fromUserId: string; fromName: string; offer?: RTCSessionDescriptionInit } | null>(null);
-  // Answered incoming call shown in CallModal
-  const [answeredCall, setAnsweredCall] = useState<{ fromUserId: string; fromName: string; offer?: RTCSessionDescriptionInit } | null>(null);
-  const [answeredCallStatus, setAnsweredCallStatus] = useState<import('@/hooks/use-webrtc').RTCStatus>('calling');
+  // Incoming call state
+  const [incomingCall, setIncomingCall] = useState<{
+    fromUserId: string;
+    fromName: string;
+    offer?: RTCSessionDescriptionInit;
+  } | null>(null);
+
+  // Active call (answered incoming)
+  const [activeCall, setActiveCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
+  const [callStatus, setCallStatus] = useState<RTCStatus>('idle');
+
+  // WebRTC for the RECEIVER side — lives here so it survives modal mounts
+  const handleSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
+    if (!activeCall) return;
+    sendWebRTCSignal(activeCall.fromUserId, type, data);
+  }, [activeCall, sendWebRTCSignal]);
+
+  const { answerCall, receiveIce, hangUp, toggleMic, micOn } = useWebRTC(
+    setCallStatus,
+    handleSignal,
+  );
 
   useEffect(() => {
     if (!user) setLocation('/');
   }, [user, setLocation]);
 
-  // Listen for incoming calls & call lifecycle events
-  const answeredCallRef = useRef<{ fromUserId: string; fromName: string } | null>(null);
-  useEffect(() => { answeredCallRef.current = answeredCall; }, [answeredCall]);
+  // Listen for incoming call signal
+  const incomingCallRef = useRef(incomingCall);
+  useEffect(() => { incomingCallRef.current = incomingCall; }, [incomingCall]);
 
   useEffect(() => {
     return on('call', (payload) => {
       if (payload.action === 'incoming' && payload.toUserId === user?.id) {
         setIncomingCall({ fromUserId: payload.fromUserId, fromName: payload.fromName });
       }
-      if (payload.action === 'end' && answeredCallRef.current) {
-        setAnsweredCallStatus('ended');
+      if (payload.action === 'end') {
+        setCallStatus('ended');
+        setIncomingCall(null);
       }
-      if (payload.action === 'end' || payload.action === 'reject') {
+      if (payload.action === 'reject') {
         setIncomingCall(null);
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, user?.id]);
 
-  // Attach WebRTC offer to the incoming call when it arrives
+  // Receive WebRTC offer and ICE candidates for the receiver
   useEffect(() => {
     return on('webrtc_signal', (payload) => {
       if (payload.signalType === 'offer') {
+        // Attach offer to incomingCall
         setIncomingCall((prev) =>
           prev ? { ...prev, offer: payload.data as RTCSessionDescriptionInit } : prev
         );
       }
+      if (payload.signalType === 'ice') {
+        receiveIce(payload.data as RTCIceCandidateInit);
+      }
     });
-  }, [on]);
+  }, [on, receiveIce]);
 
   if (!user) return null;
 
   const activeChat = chats.find(c => c.id === params?.id);
   const isChatOpen = match && params?.id;
 
-  const handleAnswerCall = () => {
+  const handleAnswerCall = async () => {
     if (!incomingCall) return;
     sendCall(incomingCall.fromUserId, 'answer');
-    setAnsweredCall(incomingCall);
-    setAnsweredCallStatus('calling');
+    setActiveCall({ fromUserId: incomingCall.fromUserId, fromName: incomingCall.fromName });
+    setCallStatus('calling');
     setIncomingCall(null);
+    if (incomingCall.offer) {
+      await answerCall(incomingCall.offer).catch(() => setCallStatus('ended'));
+    }
   };
 
   const handleRejectCall = () => {
@@ -75,16 +101,17 @@ export default function DashboardPage() {
     setIncomingCall(null);
   };
 
-  const handleEndAnsweredCall = () => {
-    if (answeredCall) {
-      sendCall(answeredCall.fromUserId, 'end');
+  const handleEndActiveCall = () => {
+    if (activeCall) {
+      sendCall(activeCall.fromUserId, 'end');
     }
-    setAnsweredCall(null);
+    hangUp();
+    setActiveCall(null);
+    setCallStatus('idle');
   };
 
   return (
     <div className="flex w-full bg-background overflow-hidden" style={{ height: '100dvh' }}>
-      {/* Incoming call overlay */}
       <AnimatePresence>
         {incomingCall && (
           <IncomingCallModal
@@ -96,25 +123,21 @@ export default function DashboardPage() {
         )}
       </AnimatePresence>
 
-      {/* Answered incoming call modal */}
-      {answeredCall && (
+      {activeCall && (
         <CallModal
-          isOpen={!!answeredCall}
-          onClose={handleEndAnsweredCall}
-          contactName={answeredCall.fromName}
-          contactId={answeredCall.fromUserId}
-          callStatus={answeredCallStatus}
-          setCallStatus={setAnsweredCallStatus}
-          incomingOffer={answeredCall?.offer ?? null}
+          isOpen={!!activeCall}
+          onClose={handleEndActiveCall}
+          contactName={activeCall.fromName}
+          callStatus={callStatus}
+          micOn={micOn}
+          onToggleMic={toggleMic}
         />
       )}
 
-      {/* Sidebar */}
       <div className={`${isChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-80 h-full flex-col`}>
         <Sidebar />
       </div>
 
-      {/* Chat area */}
       <main className={`${isChatOpen ? 'flex' : 'hidden md:flex'} flex-1 h-full relative border-l border-border/50 shadow-[-20px_0_50px_-20px_rgba(0,0,0,0.5)] overflow-hidden flex-col`}>
         {isChatOpen ? (
           <ChatWindow
