@@ -239,6 +239,12 @@ export function useWebRTC(
       throw new Error('No hay una llamada activa para aplicar la respuesta remota.');
     }
 
+    // Guard: only apply if we're in the right state
+    if (pc.signalingState !== 'have-local-offer') {
+      console.warn('[WebRTC] receiveAnswer called in wrong state:', pc.signalingState, '— ignoring');
+      return;
+    }
+
     try {
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
       remoteDescSetRef.current = true;

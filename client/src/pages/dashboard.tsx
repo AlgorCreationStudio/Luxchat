@@ -60,7 +60,10 @@ export default function DashboardPage() {
   useEffect(() => { incomingCallRef.current = incomingCall; }, [incomingCall]);
   useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
 
+  const isAnsweringRef = useRef(false);
   const startAnswerCall = useCallback(async (offer: RTCSessionDescriptionInit) => {
+    if (isAnsweringRef.current) return; // prevent double-call
+    isAnsweringRef.current = true;
     try {
       await answerCall(offer);
       setCallStatus('connected'); // answer sent successfully → show connected immediately
@@ -183,6 +186,7 @@ export default function DashboardPage() {
     }
     receiverPeerIdRef.current = '';
     answerRequestedRef.current = false;
+    isAnsweringRef.current = false;
     pendingOfferRef.current = null;
     hangUp();
     setActiveCall(null);
