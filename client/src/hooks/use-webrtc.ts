@@ -224,7 +224,7 @@ export function useWebRTC(
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       onNeedSignal('answer', answer);
-      onStatusChange('calling'); // caller will move to connected via connectionstatechange
+      onStatusChange('connected'); // callee answered → show connected immediately
     } catch (error) {
       console.error('[WebRTC] Failed to answer incoming call', error);
       cleanup();

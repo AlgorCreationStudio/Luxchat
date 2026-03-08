@@ -228,14 +228,32 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   }, [on, receiveAnswer, callerReceiveIce, callerHangUp, toast]);
 
   const handleCall = async () => {
-    if (!otherUserId) return;
-    otherUserIdRef.current = otherUserId;
+    let targetId = otherUserId;
+
+    // Fallback: refetch members if otherUserId is empty
+    if (!targetId && chatId && user?.id) {
+      try {
+        const r = await fetch(`/api/chats/${chatId}/members`);
+        const members: { id: string }[] = await r.json();
+        const other = members.find((m) => m.id !== user.id);
+        if (other) { targetId = other.id; setOtherUserId(other.id); otherUserIdRef.current = other.id; }
+      } catch {}
+    }
+
+    if (!targetId) {
+      toast({ variant: 'destructive', title: 'No se pudo iniciar la llamada', description: 'No se encontró el participante.' });
+      return;
+    }
+
+    otherUserIdRef.current = targetId;
     setCallStatus('calling');
     setCallOpen(true);
 
     try {
+      // Send incoming FIRST so callee is ready before receiving the WebRTC offer
+      sendCall(targetId, 'incoming');
+      await new Promise(r => setTimeout(r, 300));
       await startCall();
-      sendCall(otherUserId, 'incoming');
     } catch (error) {
       console.error('[Call] Outgoing call startup failed', error);
       callerHangUp();
