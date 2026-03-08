@@ -67,3 +67,14 @@ export type Chat = typeof chats.$inferSelect;
 export type ChatMember = typeof chatMembers.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type ChatWithMeta = Chat & { avatarUrl?: string | null; lastMessage?: string; unread?: number };
+
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: serial('id').primaryKey(),
+  userId: uuid('user_id').notNull(),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;

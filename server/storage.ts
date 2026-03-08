@@ -256,4 +256,16 @@ export class DatabaseStorage {
   }
 }
 
+  async savePushSubscription(userId: string, sub: { endpoint: string; p256dh: string; auth: string }): Promise<void> {
+    await db.insert(pushSubscriptions).values({ userId, ...sub })
+      .onConflictDoUpdate({ target: pushSubscriptions.endpoint, set: { userId, p256dh: sub.p256dh, auth: sub.auth } });
+  }
+
+  async getPushSubscriptions(userId: string): Promise<PushSubscription[]> {
+    return db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
+  }
+
+  async deletePushSubscription(endpoint: string): Promise<void> {
+    await db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint));
+  }
 export const storage = new DatabaseStorage();

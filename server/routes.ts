@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { initWebPush, getVapidPublicKey, sendPushToUser } from "./push";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
@@ -135,6 +136,8 @@ function memberIds(members: { userId: string }[]): string[] {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  initWebPush();
+
 
   // Users
   app.post(api.users.create.path, async (req, res) => {
@@ -270,6 +273,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ success: true });
   });
 
+  // Push subscription endpoints
+  app.get('/api/push/vapid-key', (_req, res) => {
+    res.json({ publicKey: getVapidPublicKey() });
+  });
+
+  app.post('/api/push/subscribe', async (req, res) => {
+    const { userId, subscription } = req.body;
+    if (!userId || !subscription?.endpoint) return res.status(400).json({ message: 'Invalid' });
+    await storage.savePushSubscription(userId, {
+      endpoint: subscription.endpoint,
+      p256dh: subscription.keys.p256dh,
+      auth: subscription.keys.auth,
+    });
+    res.json({ success: true });
+  });
+
+  app.post('/api/push/unsubscribe', async (req, res) => {
+    const { endpoint } = req.body;
+    if (endpoint) await storage.deletePushSubscription(endpoint);
+    res.json({ success: true });
+  });
+
   // WebSocket
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
   const clients = new Map<string, Set<WebSocket>>();
@@ -301,6 +326,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             type: "message",
             payload: { ...saved, createdAt: saved.createdAt?.toISOString() ?? new Date().toISOString() },
           });
+
+          // Push to offline members
+          for (const memberId of memberIds(members)) {
+            if (memberId === p.senderId) continue;
+            if (clients.get(memberId)?.readyState === 1) continue; // already online via WS
+            const sender = await storage.getUser(p.senderId);
+            const body = p.type === 'audio' ? '🎤 Nota de voz' : (p.content || '...');
+            await sendPushToUser(memberId, {
+              title: sender?.displayName ?? 'LuxChat',
+              body,
+              url: '/app',
+            });
+          }
         }
 
         if (type === "typing") {

@@ -11,6 +11,7 @@ import { useWebSocket } from '@/hooks/use-websocket';
 import { getWebRTCErrorMessage, useWebRTC, RTCStatus } from '@/hooks/use-webrtc';
 import { useToast } from '@/hooks/use-toast';
 import { MessageSquareDashed } from 'lucide-react';
+import { usePushNotifications } from '@/hooks/use-push-notifications';
 
 export default function DashboardPage() {
   const user = useAuthStore(s => s.user);
@@ -19,6 +20,7 @@ export default function DashboardPage() {
   const [match, params] = useRoute('/chat/:id');
   const { data: chats = [] } = useChats(user?.id);
   const { on, sendCall, sendWebRTCSignal } = useWebSocket();
+  usePushNotifications();
 
   type IncomingCallState = {
     fromUserId: string;
