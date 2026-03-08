@@ -64,7 +64,7 @@ export function useContacts(userId?: string) {
       return res.json() as Promise<User[]>;
     },
     enabled: !!userId,
-    refetchInterval: 10000,
+    refetchInterval: 5000,
   });
 }
 
@@ -77,7 +77,8 @@ export function usePendingRequests(userId?: string) {
       return res.json() as Promise<(User & { requestId: number })[]>;
     },
     enabled: !!userId,
-    refetchInterval: 15000,
+    refetchInterval: 2000,
+    refetchOnWindowFocus: true,
   });
 }
 

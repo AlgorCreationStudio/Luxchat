@@ -45,11 +45,17 @@ export function useWebSocket() {
 
   useEffect(() => {
     if (!user?.id) return;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?userId=${user.id}`;
-    const socket = new WebSocket(wsUrl);
+    let socket: WebSocket;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let dead = false;
 
-    socket.onopen = () => console.log('[WS] Connected');
+    const connect = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws?userId=${user.id}`;
+      socket = new WebSocket(wsUrl);
+      wsRef.current = socket;
+
+      socket.onopen = () => console.log('[WS] Connected');
 
     socket.onmessage = (event) => {
       try {
@@ -115,14 +121,32 @@ export function useWebSocket() {
           showNotification('LuxChat', `👤 ${msg.payload.fromName} quiere conectar contigo`);
         }
 
+        if ((msg as any).type === 'pending_flush') {
+          queryClient.invalidateQueries({ queryKey: ['pending-requests', user.id] });
+        }
       } catch (err) {
         console.error('[WS] Parse error:', err);
       }
     };
 
-    socket.onclose = () => console.log('[WS] Disconnected');
-    wsRef.current = socket;
-    return () => socket.close();
+      socket.onclose = () => {
+        console.log('[WS] Disconnected');
+        if (!dead) {
+          reconnectTimer = setTimeout(connect, 2000);
+        }
+      };
+
+      socket.onerror = () => socket.close();
+    };
+
+    connect();
+
+    return () => {
+      dead = true;
+      clearTimeout(reconnectTimer);
+      socket?.close();
+      wsRef.current = null;
+    };
   }, [user?.id, queryClient]);
 
   const send = useCallback((data: object) => {

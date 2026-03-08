@@ -153,6 +153,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (userId) {
       clients.set(userId, ws);
       storage.updateUserStatus(userId, "online").catch(() => {});
+
+      // Push any pending contact requests immediately on connect
+      storage.getPendingRequests(userId).then((pending) => {
+        if (pending.length > 0 && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "pending_flush", payload: { count: pending.length } }));
+        }
+      }).catch(() => {});
     }
 
     ws.on("message", async (raw) => {
