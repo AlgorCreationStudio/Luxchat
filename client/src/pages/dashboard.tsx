@@ -18,12 +18,14 @@ export default function DashboardPage() {
   const { data: chats = [] } = useChats(user?.id);
   const { on, sendCall, sendWebRTCSignal } = useWebSocket();
 
-  // Incoming call state
-  const [incomingCall, setIncomingCall] = useState<{
+  type IncomingCallState = {
     fromUserId: string;
     fromName: string;
     offer?: RTCSessionDescriptionInit;
-  } | null>(null);
+  };
+
+  // Incoming call state
+  const [incomingCall, setIncomingCall] = useState<IncomingCallState | null>(null);
 
   // Active call (answered incoming)
   const [activeCall, setActiveCall] = useState<{ fromUserId: string; fromName: string } | null>(null);
@@ -32,6 +34,7 @@ export default function DashboardPage() {
   const activeCallRef = useRef(activeCall);
   const receiverPeerIdRef = useRef('');
   const answerRequestedRef = useRef(false);
+  const pendingOfferRef = useRef<{ fromUserId: string; offer: RTCSessionDescriptionInit } | null>(null);
 
   // WebRTC for the RECEIVER side — lives here so it survives modal mounts
   const handleSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
@@ -70,16 +73,22 @@ export default function DashboardPage() {
       if (payload.action === 'incoming' && payload.toUserId === user?.id) {
         receiverPeerIdRef.current = payload.fromUserId;
         answerRequestedRef.current = false;
-        setIncomingCall({ fromUserId: payload.fromUserId, fromName: payload.fromName });
+        const pendingOffer = pendingOfferRef.current?.fromUserId === payload.fromUserId
+          ? pendingOfferRef.current.offer
+          : undefined;
+        pendingOfferRef.current = null;
+        setIncomingCall({ fromUserId: payload.fromUserId, fromName: payload.fromName, offer: pendingOffer });
       }
       if (payload.action === 'end') {
         setCallStatus('ended');
         setIncomingCall(null);
         answerRequestedRef.current = false;
+        pendingOfferRef.current = null;
       }
       if (payload.action === 'reject') {
         setIncomingCall(null);
         answerRequestedRef.current = false;
+        pendingOfferRef.current = null;
       }
     });
     return () => {
@@ -98,7 +107,10 @@ export default function DashboardPage() {
 
       if (payload.signalType === 'offer') {
         const offer = payload.data as RTCSessionDescriptionInit;
+        pendingOfferRef.current = { fromUserId: payload.fromUserId, offer };
+
         if (answerRequestedRef.current) {
+          pendingOfferRef.current = null;
           void startAnswerCall(offer);
           return;
         }
@@ -106,6 +118,7 @@ export default function DashboardPage() {
         // Attach offer to incomingCall until user answers.
         setIncomingCall((prev) => {
           if (!prev || prev.fromUserId !== payload.fromUserId) return prev;
+          pendingOfferRef.current = null;
           return { ...prev, offer };
         });
       }
@@ -126,6 +139,10 @@ export default function DashboardPage() {
   const handleAnswerCall = async () => {
     const currentIncomingCall = incomingCallRef.current;
     if (!currentIncomingCall) return;
+    const offer = currentIncomingCall.offer
+      ?? (pendingOfferRef.current?.fromUserId === currentIncomingCall.fromUserId
+        ? pendingOfferRef.current.offer
+        : undefined);
 
     answerRequestedRef.current = true;
     receiverPeerIdRef.current = currentIncomingCall.fromUserId;
@@ -134,8 +151,9 @@ export default function DashboardPage() {
     setCallStatus('calling');
     setIncomingCall(null);
 
-    if (currentIncomingCall.offer) {
-      await startAnswerCall(currentIncomingCall.offer);
+    if (offer) {
+      pendingOfferRef.current = null;
+      await startAnswerCall(offer);
     }
   };
 
@@ -145,6 +163,7 @@ export default function DashboardPage() {
 
     receiverPeerIdRef.current = '';
     answerRequestedRef.current = false;
+    pendingOfferRef.current = null;
     sendCall(currentIncomingCall.fromUserId, 'reject');
     setIncomingCall(null);
   };
@@ -156,6 +175,7 @@ export default function DashboardPage() {
     }
     receiverPeerIdRef.current = '';
     answerRequestedRef.current = false;
+    pendingOfferRef.current = null;
     hangUp();
     setActiveCall(null);
     setCallStatus('idle');

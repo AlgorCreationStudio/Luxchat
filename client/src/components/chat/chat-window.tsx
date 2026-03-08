@@ -218,10 +218,23 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
 
   const handleCall = async () => {
     if (!otherUserId) return;
+    otherUserIdRef.current = otherUserId;
     setCallStatus('calling');
     setCallOpen(true);
-    sendCall(otherUserId, 'incoming');
-    await startCall().catch(() => setCallStatus('ended'));
+
+    try {
+      await startCall();
+      sendCall(otherUserId, 'incoming');
+    } catch {
+      callerHangUp();
+      setCallOpen(false);
+      setCallStatus('idle');
+      toast({
+        variant: 'destructive',
+        title: 'No se pudo iniciar la llamada',
+        description: 'Verifica el micrófono o tu conexión y vuelve a intentarlo.',
+      });
+    }
   };
 
   const handleEndCall = () => {

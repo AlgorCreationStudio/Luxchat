@@ -53,6 +53,18 @@ export function useWebSocket() {
   const user = useAuthStore((state) => state.user);
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
+  const outboundQueueRef = useRef<string[]>([]);
+
+  const flushQueue = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    while (outboundQueueRef.current.length > 0) {
+      const next = outboundQueueRef.current.shift();
+      if (!next) continue;
+      ws.send(next);
+    }
+  }, []);
 
   useEffect(() => {
     requestNotificationPermission();
@@ -70,7 +82,10 @@ export function useWebSocket() {
       socket = new WebSocket(wsUrl);
       wsRef.current = socket;
 
-      socket.onopen = () => console.log('[WS] Connected');
+      socket.onopen = () => {
+        console.log('[WS] Connected');
+        flushQueue();
+      };
 
     socket.onmessage = (event) => {
       try {
@@ -165,13 +180,20 @@ export function useWebSocket() {
       clearTimeout(reconnectTimer);
       socket?.close();
       wsRef.current = null;
+      outboundQueueRef.current = [];
     };
-  }, [user?.id, queryClient]);
+  }, [user?.id, queryClient, flushQueue]);
 
   const send = useCallback((data: object) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
+    const json = JSON.stringify(data);
+    const ws = wsRef.current;
+
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(json);
+      return;
     }
+
+    outboundQueueRef.current.push(json);
   }, []);
 
   const sendMessage = useCallback((chatId: string, content: string, extra?: Partial<Message>) => {

@@ -29,12 +29,48 @@ const WsDelete = z.object({ messageId: z.number(), chatId: z.string() });
 const WsCall = z.object({ toUserId: z.string(), fromUserId: z.string(), fromName: z.string(), action: z.enum(["incoming", "answer", "reject", "end"]) });
 const WsContactRequest = z.object({ toUserId: z.string(), fromUserId: z.string(), fromName: z.string() });
 
-function broadcast(clients: Map<string, WebSocket>, userIds: string[], payload: object) {
+type ClientMap = Map<string, Set<WebSocket>>;
+
+function addClient(clients: ClientMap, userId: string, ws: WebSocket) {
+  const sockets = clients.get(userId) ?? new Set<WebSocket>();
+  sockets.add(ws);
+  clients.set(userId, sockets);
+}
+
+function removeClient(clients: ClientMap, userId: string, ws: WebSocket) {
+  const sockets = clients.get(userId);
+  if (!sockets) return false;
+
+  sockets.delete(ws);
+  if (sockets.size === 0) {
+    clients.delete(userId);
+    return true;
+  }
+
+  return false;
+}
+
+function sendToUser(clients: ClientMap, userId: string, payload: object) {
+  const sockets = clients.get(userId);
+  if (!sockets || sockets.size === 0) return;
+
   const json = JSON.stringify(payload);
-  userIds.forEach((uid) => {
-    const ws = clients.get(uid);
-    if (ws?.readyState === WebSocket.OPEN) ws.send(json);
-  });
+  for (const ws of Array.from(sockets)) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(json);
+      continue;
+    }
+
+    sockets.delete(ws);
+  }
+
+  if (sockets.size === 0) {
+    clients.delete(userId);
+  }
+}
+
+function broadcast(clients: ClientMap, userIds: string[], payload: object) {
+  userIds.forEach((uid) => sendToUser(clients, uid, payload));
 }
 
 function memberIds(members: { userId: string }[]): string[] {
@@ -179,13 +215,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // WebSocket
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
-  const clients = new Map<string, WebSocket>();
+  const clients = new Map<string, Set<WebSocket>>();
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url!, `http://${req.headers.host}`);
     const userId = url.searchParams.get("userId") ?? "";
     if (userId) {
-      clients.set(userId, ws);
+      addClient(clients, userId, ws);
       storage.updateUserStatus(userId, "online").catch(() => {});
 
       // Push any pending contact requests immediately on connect
@@ -263,26 +299,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // Call signaling
         if (type === "call") {
           const p = WsCall.parse(payload);
-          const targetWs = clients.get(p.toUserId);
-          if (targetWs?.readyState === WebSocket.OPEN) {
-            targetWs.send(JSON.stringify({ type: "call", payload: p }));
-          }
+          sendToUser(clients, p.toUserId, { type: "call", payload: p });
         }
 
         // Contact request notification
         if (type === "webrtc_signal") {
-          const targetWs = clients.get(payload.toUserId);
-          if (targetWs?.readyState === WebSocket.OPEN) {
-            targetWs.send(JSON.stringify({ type: "webrtc_signal", payload }));
-          }
+          sendToUser(clients, payload.toUserId, { type: "webrtc_signal", payload });
         }
 
         if (type === "contact_request") {
           const p = WsContactRequest.parse(payload);
-          const targetWs = clients.get(p.toUserId);
-          if (targetWs?.readyState === WebSocket.OPEN) {
-            targetWs.send(JSON.stringify({ type: "contact_request", payload: p }));
-          }
+          sendToUser(clients, p.toUserId, { type: "contact_request", payload: p });
         }
 
       } catch (err) {
@@ -292,8 +319,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     ws.on("close", () => {
       if (userId) {
-        clients.delete(userId);
-        storage.updateUserStatus(userId, "offline").catch(() => {});
+        const isLastClient = removeClient(clients, userId, ws);
+        if (isLastClient) {
+          storage.updateUserStatus(userId, "offline").catch(() => {});
+        }
       }
     });
   });
