@@ -10,6 +10,7 @@ export function UpdateBanner() {
   const dismissed = useRef(false);
 
   useEffect(() => {
+    // Method 1: poll /api/version
     const check = async () => {
       try {
         const res = await fetch('/api/version', { cache: 'no-store' });
@@ -17,10 +18,8 @@ export function UpdateBanner() {
         const { version } = await res.json();
 
         if (currentVersion.current === null) {
-          // First load — store current version
           currentVersion.current = version;
         } else if (version !== currentVersion.current && !dismissed.current) {
-          // New deploy detected
           setUpdateAvailable(true);
         }
       } catch {
@@ -30,6 +29,22 @@ export function UpdateBanner() {
 
     check();
     const interval = setInterval(check, POLL_INTERVAL);
+
+    // Method 2: Service Worker update event (more reliable on mobile PWA)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller && !dismissed.current) {
+              setUpdateAvailable(true);
+            }
+          });
+        });
+      }).catch(() => {});
+    }
+
     return () => clearInterval(interval);
   }, []);
 

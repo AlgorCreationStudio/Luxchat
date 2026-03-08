@@ -31,7 +31,8 @@ export function CallModal({
 
   useEffect(() => {
     if (status === 'rejected' || status === 'ended') {
-      const t = setTimeout(onClose, 1800);
+      // Longer delay on mobile to let user see the status before dismissing
+      const t = setTimeout(onClose, 2800);
       return () => clearTimeout(t);
     }
   }, [status, onClose]);

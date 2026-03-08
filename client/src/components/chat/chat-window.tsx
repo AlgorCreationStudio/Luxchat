@@ -55,18 +55,27 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (isAtBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // Mark as read ONLY when window is focused and user is in this chat
+  // Mark as read when chat opens or app comes back to foreground
   useEffect(() => {
     const markAsRead = () => {
-      if (document.hasFocus() && chatId && user) {
+      if (chatId && user) {
         markRead.mutate({ chatId, userId: user.id });
         sendRead(chatId);
       }
     };
 
-    markAsRead(); // Mark on mount
+    markAsRead(); // Mark on mount / chat switch
+
+    // Desktop: focus event
     window.addEventListener('focus', markAsRead);
-    return () => window.removeEventListener('focus', markAsRead);
+    // Mobile PWA: visibilitychange is more reliable than focus
+    const onVisible = () => { if (document.visibilityState === 'visible') markAsRead(); };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      window.removeEventListener('focus', markAsRead);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [chatId, user?.id]);
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useRoute } from 'wouter';
 import { AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '@/store/use-auth-store';
@@ -27,19 +27,24 @@ export default function DashboardPage() {
   }, [user, setLocation]);
 
   // Listen for incoming calls & call lifecycle events
+  // Use refs to avoid stale closures that cause the listener to re-register
+  const answeredCallRef = useRef<{ fromUserId: string; fromName: string } | null>(null);
+  useEffect(() => { answeredCallRef.current = answeredCall; }, [answeredCall]);
+
   useEffect(() => {
     return on('call', (payload) => {
       if (payload.action === 'incoming' && payload.toUserId === user?.id) {
         setIncomingCall({ fromUserId: payload.fromUserId, fromName: payload.fromName });
       }
-      if (payload.action === 'end' && answeredCall) {
+      if (payload.action === 'end' && answeredCallRef.current) {
         setAnsweredCallStatus('ended');
       }
       if (payload.action === 'end' || payload.action === 'reject') {
         setIncomingCall(null);
       }
     });
-  }, [on, user?.id, answeredCall]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [on, user?.id]);
 
   if (!user) return null;
 

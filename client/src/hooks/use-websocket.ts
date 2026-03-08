@@ -21,16 +21,29 @@ type WsEventMap = {
 
 const listeners = new Map<string, Set<Function>>();
 
-// Browser notifications
+// Browser notifications — uses SW for mobile (iOS/Android PWA), falls back to Notification API
 function requestNotificationPermission() {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
 }
 
-function showNotification(title: string, body: string, icon?: string) {
-  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-    new Notification(title, { body, icon: icon || '/favicon.png', badge: '/favicon.png' });
+async function showNotification(title: string, body: string, icon?: string) {
+  if (!document.hidden) return; // Only notify when app is in background
+  const ico = icon || '/icon-192.png';
+  // Try Service Worker first (works on Android PWA and some iOS versions)
+  if ('serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg.showNotification) {
+        await reg.showNotification(title, { body, icon: ico, badge: ico });
+        return;
+      }
+    } catch { /* fall through */ }
+  }
+  // Fallback: plain Notification API (desktop)
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, { body, icon: ico });
   }
 }
 
