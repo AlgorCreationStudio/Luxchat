@@ -57,10 +57,12 @@ export function registerAuthRoutes(app: Express) {
       }
 
       const passwordHash = await bcrypt.hash(password, 12);
+      const tag = Array.from({ length: 6 }, () => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random() * 36)]).join('');
       const [user] = await db.insert(users).values({
         displayName: displayName.trim(),
         email: email.toLowerCase(),
         passwordHash,
+        tag,
         status: "online",
       }).returning();
 
