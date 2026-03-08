@@ -84,45 +84,46 @@ export class DatabaseStorage {
     );
     if (existing) throw new Error("Contact already added or request pending");
 
-    // Create pending request — both sides need a row
+    // Create pending request: userId = sender, contactId = receiver
     const [contact] = await db.insert(contacts).values({
-      userId: contactId,   // the receiver
-      contactId: userId,   // the sender (as the "contact")
-      fromUserId: userId,  // who sent it
+      userId: userId,       // the sender
+      contactId: contactId, // the receiver
+      fromUserId: userId,   // who sent it
       status: "pending",
     }).returning();
     return contact;
   }
 
   async acceptContact(requestId: number, userId: string): Promise<void> {
-    // Get the request
+    // userId is the receiver (stored as contactId in the pending row)
     const [req] = await db.select().from(contacts).where(eq(contacts.id, requestId));
-    if (!req || req.userId !== userId) throw new Error("Request not found");
+    if (!req || req.contactId !== userId) throw new Error("Request not found");
 
     // Update request to accepted
     await db.update(contacts).set({ status: "accepted" }).where(eq(contacts.id, requestId));
 
     // Create reverse contact row so both can see each other
     const [reverseExists] = await db.select().from(contacts).where(
-      and(eq(contacts.userId, req.contactId), eq(contacts.contactId, userId))
+      and(eq(contacts.userId, userId), eq(contacts.contactId, req.userId))
     );
     if (!reverseExists) {
       await db.insert(contacts).values({
-        userId: req.contactId,
-        contactId: userId,
+        userId: userId,
+        contactId: req.userId,
         fromUserId: userId,
         status: "accepted",
       });
     } else {
       await db.update(contacts).set({ status: "accepted" }).where(
-        and(eq(contacts.userId, req.contactId), eq(contacts.contactId, userId))
+        and(eq(contacts.userId, userId), eq(contacts.contactId, req.userId))
       );
     }
   }
 
   async rejectContact(requestId: number, userId: string): Promise<void> {
+    // userId is the receiver (stored as contactId in the pending row)
     await db.update(contacts).set({ status: "rejected" }).where(
-      and(eq(contacts.id, requestId), eq(contacts.userId, userId))
+      and(eq(contacts.id, requestId), eq(contacts.contactId, userId))
     );
   }
 
