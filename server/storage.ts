@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
-  users, contacts, chats, chatMembers, messages,
-  type User, type InsertUser, type Contact, type Chat, type ChatMember, type Message, type ChatWithMeta,
+  users, contacts, chats, chatMembers, messages, pushSubscriptions,
+  type User, type InsertUser, type Contact, type Chat, type ChatMember, type Message, type ChatWithMeta, type PushSubscription,
 } from "@shared/schema";
 import { eq, and, desc, ne, ilike } from "drizzle-orm";
 
@@ -254,7 +254,6 @@ export class DatabaseStorage {
     const [msg] = await db.select({ chatId: messages.chatId }).from(messages).where(eq(messages.id, messageId));
     return msg?.chatId;
   }
-}
 
   async savePushSubscription(userId: string, sub: { endpoint: string; p256dh: string; auth: string }): Promise<void> {
     await db.insert(pushSubscriptions).values({ userId, ...sub })
@@ -268,4 +267,6 @@ export class DatabaseStorage {
   async deletePushSubscription(endpoint: string): Promise<void> {
     await db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint));
   }
+}
+
 export const storage = new DatabaseStorage();
