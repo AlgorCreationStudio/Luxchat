@@ -112,12 +112,14 @@ export function useWebRTC(
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
   const remoteDescSetRef = useRef(false);
 
-  const cleanup = useCallback(() => {
+  const cleanup = useCallback((options?: { preservePendingIce?: boolean }) => {
     pcRef.current?.close();
     pcRef.current = null;
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
-    pendingIceRef.current = [];
+    if (!options?.preservePendingIce) {
+      pendingIceRef.current = [];
+    }
     remoteDescSetRef.current = false;
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
@@ -202,7 +204,7 @@ export function useWebRTC(
 
   // CALLEE: receive offer and send answer
   const answerCall = useCallback(async (offer: RTCSessionDescriptionInit) => {
-    cleanup();
+    cleanup({ preservePendingIce: true });
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       localStreamRef.current = stream;
