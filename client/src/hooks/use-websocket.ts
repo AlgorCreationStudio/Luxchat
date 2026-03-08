@@ -21,7 +21,6 @@ type WsEventMap = {
   webrtc_signal: (payload: { fromUserId: string; signalType: 'offer' | 'answer' | 'ice'; data: unknown }) => void;
 };
 
-const listeners = new Map<string, Set<Function>>();
 
 // Browser notifications — uses SW for mobile (iOS/Android PWA), falls back to Notification API
 function requestNotificationPermission() {
@@ -53,6 +52,7 @@ export function useWebSocket() {
   const user = useAuthStore((state) => state.user);
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
+  const listenersRef = useRef(new Map<string, Set<Function>>());
   const outboundQueueRef = useRef<string[]>([]);
 
   const flushQueue = useCallback(() => {
@@ -107,11 +107,11 @@ export function useWebSocket() {
         }
 
         if (msg.type === 'typing') {
-          listeners.get('typing')?.forEach((fn) => fn(msg.payload));
+          listenersRef.current.get('typing')?.forEach((fn) => fn(msg.payload));
         }
 
         if (msg.type === 'read') {
-          listeners.get('read')?.forEach((fn) => fn(msg.payload));
+          listenersRef.current.get('read')?.forEach((fn) => fn(msg.payload));
           // Update read status in cached messages
           queryClient.setQueryData<Message[]>(['messages', msg.payload.chatId], (old) => {
             if (!old) return old;
@@ -139,18 +139,18 @@ export function useWebSocket() {
         }
 
         if (msg.type === 'call') {
-          listeners.get('call')?.forEach((fn) => fn(msg.payload));
+          listenersRef.current.get('call')?.forEach((fn) => fn(msg.payload));
           if (msg.payload.action === 'incoming') {
             showNotification('LuxChat', `📞 Llamada entrante de ${msg.payload.fromName}`);
           }
         }
 
         if (msg.type === 'webrtc_signal') {
-          listeners.get('webrtc_signal')?.forEach((fn) => fn(msg.payload));
+          listenersRef.current.get('webrtc_signal')?.forEach((fn) => fn(msg.payload));
         }
 
         if (msg.type === 'contact_request') {
-          listeners.get('contact_request')?.forEach((fn) => fn(msg.payload));
+          listenersRef.current.get('contact_request')?.forEach((fn) => fn(msg.payload));
           queryClient.invalidateQueries({ queryKey: ['pending-requests', user.id] });
           showNotification('LuxChat', `👤 ${msg.payload.fromName} quiere conectar contigo`);
         }
@@ -255,10 +255,10 @@ export function useWebSocket() {
   }, [user, send]);
 
   const on = useCallback(<K extends keyof WsEventMap>(event: K, fn: WsEventMap[K]) => {
-    if (!listeners.has(event)) listeners.set(event, new Set());
-    listeners.get(event)!.add(fn);
+    if (!listenersRef.current.has(event)) listenersRef.current.set(event, new Set());
+    listenersRef.current.get(event)!.add(fn);
     return () => {
-      listeners.get(event)?.delete(fn);
+      listenersRef.current.get(event)?.delete(fn);
     };
   }, []);
 

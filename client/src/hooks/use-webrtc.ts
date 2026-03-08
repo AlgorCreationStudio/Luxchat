@@ -254,15 +254,11 @@ export function useWebRTC(
   const receiveAnswer = useCallback(async (answer: RTCSessionDescriptionInit) => {
     const pc = pcRef.current;
     if (!pc) {
-      // PC not ready yet — buffer the answer
-      console.warn('[WebRTC] receiveAnswer: PC not ready, buffering answer');
-      pendingAnswerRef.current = answer;
+      console.warn('[WebRTC] receiveAnswer: no active call');
       return;
     }
-
-    // Guard: only apply if we're in the right state
     if (pc.signalingState !== 'have-local-offer') {
-      console.warn('[WebRTC] receiveAnswer called in wrong state:', pc.signalingState, '— ignoring');
+      console.warn('[WebRTC] receiveAnswer: wrong state', pc.signalingState, '— ignoring');
       return;
     }
 
