@@ -63,6 +63,7 @@ export default function DashboardPage() {
   const startAnswerCall = useCallback(async (offer: RTCSessionDescriptionInit) => {
     try {
       await answerCall(offer);
+      setCallStatus('connected'); // answer sent successfully → show connected immediately
       answerRequestedRef.current = false;
     } catch (error) {
       answerRequestedRef.current = false;

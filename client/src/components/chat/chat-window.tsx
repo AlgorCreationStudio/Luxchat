@@ -202,6 +202,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   useEffect(() => {
     return on('call', (payload) => {
       if (payload.fromUserId !== otherUserIdRef.current && payload.toUserId !== otherUserIdRef.current) return;
+      if (payload.action === 'answer') setCallStatus('connected'); // callee accepted → show connected immediately
       if (payload.action === 'reject') setCallStatus('rejected');
       if (payload.action === 'end') { setCallStatus('ended'); callerHangUp(); }
     });
