@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { format } from 'date-fns';
 import { motion } from 'framer-motion';
-import { Check, CheckCheck, Trash2, SmilePlus } from 'lucide-react';
+import { Check, CheckCheck, Trash2, SmilePlus, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AudioPlayer } from './audio-player';
 import type { Message } from '@shared/schema';
@@ -9,7 +9,7 @@ import type { Message } from '@shared/schema';
 const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
 interface MessageBubbleProps {
-  message: Message & { senderName: string };
+  message: Message & { senderName: string; decryptedContent?: string };
   isMe: boolean;
   onReply: (msg: Message & { senderName: string }) => void;
   onReact: (msgId: number, emoji: string) => void;
@@ -93,7 +93,10 @@ export function MessageBubble({ message, isMe, onReply, onReact, onDelete, onScr
             {message.type === 'audio' && message.audioData ? (
               <AudioPlayer src={message.audioData} duration={message.audioDuration} isMe={isMe} />
             ) : (
-              message.content && <span>{message.content}</span>
+              <span className="flex items-start gap-1">
+                {(message as any).encrypted && !message.decryptedContent && <Lock className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-50" />}
+                {message.decryptedContent || message.content}
+              </span>
             )}
 
             {/* Media */}

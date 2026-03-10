@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Phone, Mic, Paperclip, ArrowLeft } from 'lucide-react';
+import { Send, Phone, Mic, Paperclip, ArrowLeft, Video } from 'lucide-react';
 import { useAuthStore } from '@/store/use-auth-store';
 import { useMessages, useMarkRead } from '@/hooks/use-api';
 import { useWebSocket } from '@/hooks/use-websocket';
@@ -10,6 +10,7 @@ import { MessageBubble } from './message-bubble';
 import { ReplyBar } from './reply-bar';
 import { RecordingOverlay } from './recording-overlay';
 import { CallModal } from '../modals/call-modal';
+import { useE2E } from '@/hooks/use-e2e';
 import { useToast } from '@/hooks/use-toast';
 import type { Message } from '@shared/schema';
 
@@ -29,18 +30,23 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const { toast } = useToast();
 
   const [input, setInput] = useState('');
+  const [decryptedMap, setDecryptedMap] = React.useState<Record<number, string>>({});
   const [replyTo, setReplyTo] = useState<(Message & { senderName: string }) | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [isCallOpen, setCallOpen] = useState(false);
   const [callStatus, setCallStatus] = useState<import('@/hooks/use-webrtc').RTCStatus>('idle');
   const otherUserIdRef = React.useRef('');
+  const [callMode, setCallMode] = React.useState<'audio' | 'video'>('audio');
+
+  // E2E encryption
+  const { encrypt, decrypt } = useE2E(otherUserId || null);
 
   // WebRTC caller — hook lives here so it persists across modal re-renders
   const handleCallerSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
     if (otherUserIdRef.current) sendWebRTCSignal(otherUserIdRef.current, type, data);
   }, [sendWebRTCSignal]);
 
-  const { startCall, receiveAnswer, receiveIce: callerReceiveIce, hangUp: callerHangUp, toggleMic: callerToggleMic, micOn: callerMicOn } = useWebRTC(
+  const { startCall, receiveAnswer, receiveIce: callerReceiveIce, hangUp: callerHangUp, toggleMic: callerToggleMic, micOn: callerMicOn, toggleCamera: callerToggleCamera, cameraOn: callerCameraOn, callMode: activeCallMode, localVideoRef: callerLocalVideoRef, remoteVideoRef: callerRemoteVideoRef } = useWebRTC(
     setCallStatus,
     handleCallerSignal,
   );
@@ -57,7 +63,18 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const messages = rawMessages.map((m) => ({
     ...m,
     senderName: m.senderId === user?.id ? (user?.displayName ?? 'Tú') : chatName,
+    decryptedContent: (m as any).encrypted ? decryptedMap[m.id] : undefined,
   }));
+
+  // Decrypt encrypted messages
+  useEffect(() => {
+    const encrypted = rawMessages.filter((m) => (m as any).encrypted && m.content && !decryptedMap[m.id]);
+    if (encrypted.length === 0) return;
+    encrypted.forEach(async (m) => {
+      const plain = await decrypt(m.content);
+      setDecryptedMap((prev) => ({ ...prev, [m.id]: plain }));
+    });
+  }, [rawMessages, decrypt]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -103,16 +120,17 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (recState.seconds >= 60) handleStopRec();
   }, [recState.seconds]);
 
-  const handleSend = (e?: React.FormEvent) => {
+  const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!input.trim() || !user) return;
-    sendMessage(chatId, input.trim(), replyTo ? {
+    const { text: encContent, encrypted } = await encrypt(input.trim());
+    sendMessage(chatId, encContent, replyTo ? {
       replyToId: replyTo.id,
       replyToText: replyTo.content,
       replyToSenderName: replyTo.senderName,
       replyToSenderId: replyTo.senderId,
       replyToIsAudio: replyTo.type === 'audio',
-    } : undefined);
+    } : { encrypted } as any);
     setInput('');
     setReplyTo(null);
     inputRef.current?.focus();
@@ -227,7 +245,17 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     });
   }, [on, receiveAnswer, callerReceiveIce, callerHangUp, toast]);
 
+  const handleVideoCall = async () => {
+    setCallMode('video');
+    await handleCallWithMode('video');
+  };
+
   const handleCall = async () => {
+    setCallMode('audio');
+    await handleCallWithMode('audio');
+  };
+
+  const handleCallWithMode = async (mode: 'audio' | 'video') => {
     let targetId = otherUserId;
 
     // Fallback: refetch members if otherUserId is empty
@@ -252,7 +280,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     try {
       // Send incoming signal and start call simultaneously — answer is now buffered
       sendCall(targetId, 'incoming');
-      await startCall();
+      await startCall(mode);
     } catch (error) {
       console.error('[Call] Outgoing call startup failed', error);
       callerHangUp();
@@ -301,12 +329,20 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
             )}
           </div>
         </div>
-        <button
-          onClick={handleCall}
-          className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all"
-        >
-          <Phone className="w-4 h-4 md:w-5 md:h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleVideoCall}
+            className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all"
+          >
+            <Video className="w-4 h-4 md:w-5 md:h-5" />
+          </button>
+          <button
+            onClick={handleCall}
+            className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all"
+          >
+            <Phone className="w-4 h-4 md:w-5 md:h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -398,6 +434,11 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
         callStatus={callStatus}
         micOn={callerMicOn}
         onToggleMic={callerToggleMic}
+        cameraOn={callerCameraOn}
+        onToggleCamera={callerToggleCamera}
+        callMode={activeCallMode}
+        localVideoRef={callerLocalVideoRef}
+        remoteVideoRef={callerRemoteVideoRef}
       />
     </div>
   );

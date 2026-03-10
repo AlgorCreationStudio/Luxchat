@@ -49,7 +49,7 @@ export default function DashboardPage() {
     sendWebRTCSignal(peerUserId, type, data);
   }, [sendWebRTCSignal]);
 
-  const { answerCall, receiveIce, hangUp, toggleMic, micOn } = useWebRTC(
+  const { answerCall, receiveIce, hangUp, toggleMic, micOn, toggleCamera, cameraOn, callMode, localVideoRef, remoteVideoRef } = useWebRTC(
     setCallStatus,
     handleSignal,
   );
@@ -216,6 +216,11 @@ export default function DashboardPage() {
           callStatus={callStatus}
           micOn={micOn}
           onToggleMic={toggleMic}
+          cameraOn={cameraOn}
+          onToggleCamera={toggleCamera}
+          callMode={callMode}
+          localVideoRef={localVideoRef}
+          remoteVideoRef={remoteVideoRef}
         />
       )}
 

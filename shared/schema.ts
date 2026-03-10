@@ -8,17 +8,18 @@ export const users = pgTable("users", {
   email: text("email").unique(),
   passwordHash: text("password_hash"),
   avatarUrl: text("avatar_url"),
-  tag: text("tag"),          // Short 6-char code e.g. "AB12CD"
+  tag: text("tag"),
   status: text("status").default("online"),
   lastSeen: timestamp("last_seen").defaultNow(),
+  publicKey: text("public_key"), // E2E: ECDH public key (JWK format)
 });
 
 export const contacts = pgTable("contacts", {
   id: serial("id").primaryKey(),
-  userId: uuid("user_id").notNull(),       // who receives the request / owns the contact
-  contactId: uuid("contact_id").notNull(), // the other person
-  fromUserId: uuid("from_user_id"),        // who SENT the request
-  status: text("status").default("accepted"), // pending | accepted | rejected
+  userId: uuid("user_id").notNull(),
+  contactId: uuid("contact_id").notNull(),
+  fromUserId: uuid("from_user_id"),
+  status: text("status").default("accepted"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -54,7 +55,17 @@ export const messages = pgTable("messages", {
   read: boolean("read").default(false),
   deleted: boolean("deleted").default(false),
   reactions: text("reactions").default("{}"),
+  encrypted: boolean("encrypted").default(false), // E2E flag
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: serial('id').primaryKey(),
+  userId: uuid('user_id').notNull(),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, lastSeen: true });
@@ -66,15 +77,5 @@ export type Contact = typeof contacts.$inferSelect;
 export type Chat = typeof chats.$inferSelect;
 export type ChatMember = typeof chatMembers.$inferSelect;
 export type Message = typeof messages.$inferSelect;
-export type ChatWithMeta = Chat & { avatarUrl?: string | null; lastMessage?: string; unread?: number };
-
-export const pushSubscriptions = pgTable('push_subscriptions', {
-  id: serial('id').primaryKey(),
-  userId: uuid('user_id').notNull(),
-  endpoint: text('endpoint').notNull().unique(),
-  p256dh: text('p256dh').notNull(),
-  auth: text('auth').notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
-});
-
 export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+export type ChatWithMeta = Chat & { avatarUrl?: string | null; lastMessage?: string; unread?: number };

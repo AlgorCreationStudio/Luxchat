@@ -210,6 +210,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Update avatar (base64 image)
+  app.post('/api/users/:id/avatar', async (req, res) => {
+    const { avatarUrl } = req.body;
+    if (!avatarUrl) return res.status(400).json({ message: 'avatarUrl required' });
+    // Validate it's a base64 image or URL
+    if (!avatarUrl.startsWith('data:image/') && !avatarUrl.startsWith('http')) {
+      return res.status(400).json({ message: 'Invalid avatar format' });
+    }
+    try {
+      const user = await storage.updateUserAvatar(req.params.id, avatarUrl);
+      const { passwordHash: _, ...safeUser } = user as any;
+      res.json(safeUser);
+    } catch (err) {
+      res.status(500).json({ message: 'Failed to update avatar' });
+    }
+  });
+
+  // Update profile (name, avatar)
+  app.patch('/api/users/:id/profile', async (req, res) => {
+    const { displayName, avatarUrl } = req.body;
+    try {
+      const user = await storage.updateUserProfile(req.params.id, { displayName, avatarUrl });
+      const { passwordHash: _, ...safeUser } = user as any;
+      res.json(safeUser);
+    } catch (err) {
+      res.status(500).json({ message: 'Failed to update profile' });
+    }
+  });
+
+  // Store E2E public key
+  app.post('/api/users/:id/public-key', async (req, res) => {
+    const { publicKey } = req.body;
+    if (!publicKey) return res.status(400).json({ message: 'publicKey required' });
+    await storage.updateUserPublicKey(req.params.id, publicKey);
+    res.json({ success: true });
+  });
+
+  // Get user public key for E2E
+  app.get('/api/users/:id/public-key', async (req, res) => {
+    const user = await storage.getUser(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json({ publicKey: user.publicKey });
+  });
+
   app.get(api.users.chats.path, async (req, res) => {
     res.json(await storage.getUserChats(req.params.id));
   });

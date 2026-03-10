@@ -1,16 +1,29 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { MessageSquare, Users, Plus, LogOut, Copy, Check, Bell, UserCheck, UserX } from 'lucide-react';
+import { MessageSquare, Users, Plus, LogOut, Copy, Check, Bell, UserCheck, UserX, Settings } from 'lucide-react';
 import { useAuthStore } from '@/store/use-auth-store';
 import { useContacts, useChats, useCreateChat, usePendingRequests, useAcceptContact, useRejectContact } from '@/hooks/use-api';
 import { Avatar, Button } from '../ui-library';
 import { AddContactModal } from '../modals/add-contact-modal';
+import { ProfileModal } from '../modals/profile-modal';
 import { useToast } from '@/hooks/use-toast';
+import { formatDistanceToNow } from 'date-fns';
+import { es } from 'date-fns/locale';
+
+function formatLastSeen(lastSeen: Date | string | null | undefined): string {
+  if (!lastSeen) return '';
+  try {
+    return 'hace ' + formatDistanceToNow(new Date(lastSeen), { locale: es });
+  } catch {
+    return '';
+  }
+}
 
 export function Sidebar() {
   const [activeTab, setActiveTab] = useState<'chats' | 'contacts' | 'requests'>('chats');
   const [isAddContactOpen, setAddContactOpen] = useState(false);
+  const [isProfileOpen, setProfileOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [, setLocation] = useLocation();
 
@@ -26,8 +39,7 @@ export function Sidebar() {
   const rejectContact = useRejectContact();
 
   const handleCopyTag = () => {
-    const tagToCopy = user?.tag || user?.id || '';
-    navigator.clipboard.writeText(tagToCopy);
+    navigator.clipboard.writeText(user?.tag ? `#${user.tag}` : user?.id || '');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -36,15 +48,13 @@ export function Sidebar() {
 
   const startChat = (contactId: string) => {
     if (!user) return;
-    createChat.mutate([user.id, contactId], {
-      onSuccess: (chat) => setLocation(`/chat/${chat.id}`)
-    });
+    createChat.mutate([user.id, contactId], { onSuccess: (chat) => setLocation(`/chat/${chat.id}`) });
   };
 
   const handleAccept = (requestId: number) => {
     if (!user) return;
     acceptContact.mutate({ userId: user.id, requestId }, {
-      onSuccess: () => toast({ title: "Contacto aceptado ✓", className: "bg-primary text-primary-foreground border-none" })
+      onSuccess: () => toast({ title: 'Contacto aceptado ✓', className: 'bg-primary text-primary-foreground border-none' })
     });
   };
 
@@ -66,21 +76,26 @@ export function Sidebar() {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 bg-black/20 p-3 rounded-2xl border border-white/5">
-          <Avatar src={user?.avatarUrl} fallback={user?.displayName || "?"} />
+        {/* User card — click to open profile */}
+        <div
+          className="flex items-center gap-3 bg-black/20 p-3 rounded-2xl border border-white/5 cursor-pointer hover:border-primary/30 transition-colors group"
+          onClick={() => setProfileOpen(true)}
+        >
+          <div className="relative">
+            <Avatar src={user?.avatarUrl} fallback={user?.displayName || '?'} />
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-card bg-green-400" />
+          </div>
           <div className="flex-1 min-w-0">
-            <p className="font-semibold text-foreground truncate">{user?.displayName}</p>
+            <p className="font-semibold text-foreground truncate group-hover:text-primary transition-colors">{user?.displayName}</p>
             <div
-              onClick={handleCopyTag}
+              onClick={(e) => { e.stopPropagation(); handleCopyTag(); }}
               className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer hover:text-primary transition-colors mt-0.5"
-              title="Copiar tag"
             >
-              <span className="font-mono font-bold text-primary/70">
-                {user?.tag ? `#${user.tag}` : user?.id?.slice(0, 8).toUpperCase()}
-              </span>
+              <span className="font-mono font-bold text-primary/70">{user?.tag ? `#${user.tag}` : user?.id?.slice(0, 8).toUpperCase()}</span>
               {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
             </div>
           </div>
+          <Settings className="w-4 h-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors flex-shrink-0" />
         </div>
       </div>
 
@@ -114,7 +129,7 @@ export function Sidebar() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-3 space-y-1">
-        {/* CHATS TAB */}
+        {/* CHATS */}
         {activeTab === 'chats' && (
           loadingChats ? (
             <p className="text-sm text-muted-foreground text-center py-8 animate-pulse">Cargando...</p>
@@ -132,12 +147,12 @@ export function Sidebar() {
                 onClick={() => setLocation(`/chat/${chat.id}`)}
                 className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 cursor-pointer transition-colors group"
               >
-                <Avatar fallback={chat.name || "Chat"} />
+                <Avatar fallback={chat.name || 'Chat'} src={chat.avatarUrl} />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-foreground truncate group-hover:text-primary transition-colors text-sm">
-                    {chat.name || "Direct Message"}
+                    {chat.name || 'Direct Message'}
                   </p>
-                  <p className="text-xs text-muted-foreground truncate">{chat.lastMessage || "Toca para abrir"}</p>
+                  <p className="text-xs text-muted-foreground truncate">{chat.lastMessage || 'Toca para abrir'}</p>
                 </div>
                 {(chat.unread ?? 0) > 0 && (
                   <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center font-bold flex-shrink-0">
@@ -149,7 +164,7 @@ export function Sidebar() {
           )
         )}
 
-        {/* CONTACTS TAB */}
+        {/* CONTACTS */}
         {activeTab === 'contacts' && (
           <>
             <Button
@@ -176,7 +191,14 @@ export function Sidebar() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-foreground truncate group-hover:text-secondary transition-colors text-sm">{contact.displayName}</p>
-                    <p className="text-xs font-mono text-muted-foreground/70">{contact.tag ? `#${contact.tag}` : ''}</p>
+                    <p className="text-xs text-muted-foreground/70">
+                      {contact.status === 'online'
+                        ? <span className="text-green-400">● En línea</span>
+                        : contact.lastSeen
+                          ? formatLastSeen(contact.lastSeen)
+                          : <span className="font-mono">{contact.tag ? `#${contact.tag}` : ''}</span>
+                      }
+                    </p>
                   </div>
                 </div>
               ))
@@ -184,7 +206,7 @@ export function Sidebar() {
           </>
         )}
 
-        {/* REQUESTS TAB */}
+        {/* REQUESTS */}
         {activeTab === 'requests' && (
           pendingRequests.length === 0 ? (
             <div className="text-center py-12 px-4">
@@ -198,7 +220,7 @@ export function Sidebar() {
                 initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
                 className="flex items-center gap-3 p-3 rounded-xl bg-black/20 border border-white/5"
               >
-                <Avatar fallback={req.displayName} />
+                <Avatar fallback={req.displayName} src={req.avatarUrl} />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-foreground text-sm truncate">{req.displayName}</p>
                   <p className="text-xs font-mono text-muted-foreground/70">{req.tag ? `#${req.tag}` : ''}</p>
@@ -224,6 +246,7 @@ export function Sidebar() {
       </div>
 
       <AddContactModal isOpen={isAddContactOpen} onClose={() => setAddContactOpen(false)} />
+      <ProfileModal isOpen={isProfileOpen} onClose={() => setProfileOpen(false)} />
     </div>
   );
 }

@@ -3,7 +3,7 @@ import {
   users, contacts, chats, chatMembers, messages, pushSubscriptions,
   type User, type InsertUser, type Contact, type Chat, type ChatMember, type Message, type ChatWithMeta, type PushSubscription,
 } from "@shared/schema";
-import { eq, and, desc, ne, ilike } from "drizzle-orm";
+import { eq, and, desc, ilike } from "drizzle-orm";
 
 type CreateMessageInput = {
   chatId: string;
@@ -20,6 +20,7 @@ type CreateMessageInput = {
   replyToSenderName?: string;
   replyToSenderId?: string;
   replyToIsAudio?: boolean;
+  encrypted?: boolean;
 };
 
 function generateTag(): string {
@@ -30,6 +31,11 @@ function generateTag(): string {
 export class DatabaseStorage {
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email.toLowerCase()));
     return user;
   }
 
@@ -48,7 +54,20 @@ export class DatabaseStorage {
     await db.update(users).set({ status, lastSeen: new Date() }).where(eq(users.id, id));
   }
 
-  // Returns accepted contacts
+  async updateUserAvatar(id: string, avatarUrl: string): Promise<User> {
+    const [user] = await db.update(users).set({ avatarUrl }).where(eq(users.id, id)).returning();
+    return user;
+  }
+
+  async updateUserPublicKey(id: string, publicKey: string): Promise<void> {
+    await db.update(users).set({ publicKey }).where(eq(users.id, id));
+  }
+
+  async updateUserProfile(id: string, data: { displayName?: string; avatarUrl?: string }): Promise<User> {
+    const [user] = await db.update(users).set(data).where(eq(users.id, id)).returning();
+    return user;
+  }
+
   async getUserContacts(userId: string): Promise<User[]> {
     const rows = await db.select().from(contacts).where(
       and(eq(contacts.userId, userId), eq(contacts.status, "accepted"))
@@ -58,7 +77,6 @@ export class DatabaseStorage {
     return allUsers.filter((u) => rows.some((r) => r.contactId === u.id));
   }
 
-  // Returns incoming pending requests with sender info
   async getPendingRequests(userId: string): Promise<(User & { requestId: number })[]> {
     const rows = await db.select().from(contacts).where(
       and(eq(contacts.contactId, userId), eq(contacts.status, "pending"))
@@ -72,47 +90,29 @@ export class DatabaseStorage {
     return result;
   }
 
-  // Send a contact request (pending)
   async addContact(userId: string, contactId: string): Promise<Contact> {
     const target = await this.getUser(contactId);
     if (!target) throw new Error("User not found");
     if (userId === contactId) throw new Error("You can't add yourself");
-
-    // Check if already exists
     const [existing] = await db.select().from(contacts).where(
       and(eq(contacts.userId, userId), eq(contacts.contactId, contactId))
     );
     if (existing) throw new Error("Contact already added or request pending");
-
-    // Create pending request: userId = sender, contactId = receiver
     const [contact] = await db.insert(contacts).values({
-      userId: userId,       // the sender
-      contactId: contactId, // the receiver
-      fromUserId: userId,   // who sent it
-      status: "pending",
+      userId, contactId, fromUserId: userId, status: "pending",
     }).returning();
     return contact;
   }
 
   async acceptContact(requestId: number, userId: string): Promise<void> {
-    // userId is the receiver (stored as contactId in the pending row)
     const [req] = await db.select().from(contacts).where(eq(contacts.id, requestId));
     if (!req || req.contactId !== userId) throw new Error("Request not found");
-
-    // Update request to accepted
     await db.update(contacts).set({ status: "accepted" }).where(eq(contacts.id, requestId));
-
-    // Create reverse contact row so both can see each other
     const [reverseExists] = await db.select().from(contacts).where(
       and(eq(contacts.userId, userId), eq(contacts.contactId, req.userId))
     );
     if (!reverseExists) {
-      await db.insert(contacts).values({
-        userId: userId,
-        contactId: req.userId,
-        fromUserId: userId,
-        status: "accepted",
-      });
+      await db.insert(contacts).values({ userId, contactId: req.userId, fromUserId: userId, status: "accepted" });
     } else {
       await db.update(contacts).set({ status: "accepted" }).where(
         and(eq(contacts.userId, userId), eq(contacts.contactId, req.userId))
@@ -121,7 +121,6 @@ export class DatabaseStorage {
   }
 
   async rejectContact(requestId: number, userId: string): Promise<void> {
-    // userId is the receiver (stored as contactId in the pending row)
     await db.update(contacts).set({ status: "rejected" }).where(
       and(eq(contacts.id, requestId), eq(contacts.contactId, userId))
     );
@@ -130,29 +129,19 @@ export class DatabaseStorage {
   async getUserChats(userId: string): Promise<ChatWithMeta[]> {
     const memberships = await db.select().from(chatMembers).where(eq(chatMembers.userId, userId));
     if (memberships.length === 0) return [];
-
     const result = [];
     for (const m of memberships) {
       const [chat] = await db.select().from(chats).where(eq(chats.id, m.chatId));
       if (!chat) continue;
-
-      const [lastMsg] = await db
-        .select()
-        .from(messages)
-        .where(eq(messages.chatId, chat.id))
-        .orderBy(desc(messages.createdAt))
-        .limit(1);
-
+      const [lastMsg] = await db.select().from(messages).where(eq(messages.chatId, chat.id)).orderBy(desc(messages.createdAt)).limit(1);
       const lastMessage = lastMsg
         ? lastMsg.deleted ? "🚫 Mensaje eliminado"
           : lastMsg.type === "audio" ? "🎤 Nota de voz"
+          : lastMsg.encrypted ? "🔒 Mensaje cifrado"
           : lastMsg.content || ""
         : "";
-
-      // Count unread
       const allMsgs = await db.select().from(messages).where(eq(messages.chatId, chat.id));
       const unread = allMsgs.filter(msg => !msg.read && msg.senderId !== userId).length;
-
       if (!chat.isGroup) {
         const members = await db.select().from(chatMembers).where(eq(chatMembers.chatId, chat.id));
         const other = members.find((mm) => mm.userId !== userId);
@@ -181,7 +170,6 @@ export class DatabaseStorage {
         }
       }
     }
-
     const isGroup = participantIds.length > 2;
     const [chat] = await db.insert(chats).values({ isGroup }).returning();
     for (const uid of participantIds) {
@@ -222,12 +210,12 @@ export class DatabaseStorage {
       reactions: "{}",
       read: false,
       deleted: false,
+      encrypted: msg.encrypted ?? false,
     }).returning();
     return message;
   }
 
   async markMessagesRead(chatId: string, userId: string): Promise<void> {
-    // Only mark messages NOT sent by this user as read
     const chatMessages = await db.select().from(messages).where(eq(messages.chatId, chatId));
     for (const msg of chatMessages) {
       if (msg.senderId !== userId && !msg.read) {
