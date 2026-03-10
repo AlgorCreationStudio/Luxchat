@@ -20,7 +20,18 @@ export function UpdateBanner() {
         if (currentVersion.current === null) {
           currentVersion.current = version;
         } else if (version !== currentVersion.current && !dismissed.current) {
-          setUpdateAvailable(true);
+          // Confirm the new version a second time after a delay to ensure
+          // Railway has fully booted before showing the update banner
+          setTimeout(async () => {
+            try {
+              const res2 = await fetch('/api/version', { cache: 'no-store' });
+              if (!res2.ok) return;
+              const { version: v2 } = await res2.json();
+              if (v2 !== currentVersion.current && !dismissed.current) {
+                setUpdateAvailable(true);
+              }
+            } catch {}
+          }, 5000);
         }
       } catch {
         // Offline or server down — ignore
@@ -48,7 +59,15 @@ export function UpdateBanner() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
+    // Wait for Railway server to be fully ready before reloading
+    for (let i = 0; i < 10; i++) {
+      try {
+        const res = await fetch('/api/version', { cache: 'no-store' });
+        if (res.ok) break;
+      } catch {}
+      await new Promise((r) => setTimeout(r, 1500));
+    }
     window.location.reload();
   };
 
