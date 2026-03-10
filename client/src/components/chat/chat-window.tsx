@@ -22,6 +22,7 @@ interface Props {
 }
 
 export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, onBack }: Props) {
+  // ── State (ALL hooks declared first, unconditionally) ─────────────────────────
   const user = useAuthStore((s) => s.user);
   const { data: rawMessages = [], isLoading } = useMessages(chatId);
   const { sendMessage, sendAudio, sendTyping, sendRead, sendReaction, sendDelete, sendCall, sendWebRTCSignal, on } = useWebSocket();
@@ -30,28 +31,16 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const { toast } = useToast();
 
   const [input, setInput] = useState('');
-  const [decryptedMap, setDecryptedMap] = React.useState<Record<number, string>>({});
+  const [decryptedMap, setDecryptedMap] = useState<Record<number, string>>({});
   const [replyTo, setReplyTo] = useState<(Message & { senderName: string }) | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [isCallOpen, setCallOpen] = useState(false);
   const [callStatus, setCallStatus] = useState<import('@/hooks/use-webrtc').RTCStatus>('idle');
-  const otherUserIdRef = React.useRef('');
-  const [callMode, setCallMode] = React.useState<'audio' | 'video'>('audio');
-
-  // Fetch chat members to get the other participant's userId
-  const [otherUserId, setOtherUserId] = React.useState('');
-
-  // WebRTC caller — hook lives here so it persists across modal re-renders
-  const handleCallerSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
-    if (otherUserIdRef.current) sendWebRTCSignal(otherUserIdRef.current, type, data);
-  }, [sendWebRTCSignal]);
-
-  const { startCall, receiveAnswer, receiveIce: callerReceiveIce, hangUp: callerHangUp, toggleMic: callerToggleMic, micOn: callerMicOn, toggleCamera: callerToggleCamera, cameraOn: callerCameraOn, callMode: activeCallMode, localVideoRef: callerLocalVideoRef, remoteVideoRef: callerRemoteVideoRef } = useWebRTC(
-    setCallStatus,
-    handleCallerSignal,
-  );
+  const [callMode, setCallMode] = useState<'audio' | 'video'>('audio');
   const [lockProgress, setLockProgress] = useState(0);
+  const [otherUserId, setOtherUserId] = useState('');
 
+  const otherUserIdRef = useRef('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,13 +49,29 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const holdingRef = useRef(false);
   const isFocused = useRef(true);
 
+  const handleCallerSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
+    if (otherUserIdRef.current) sendWebRTCSignal(otherUserIdRef.current, type, data);
+  }, [sendWebRTCSignal]);
+
+  const {
+    startCall, receiveAnswer, receiveIce: callerReceiveIce, hangUp: callerHangUp,
+    toggleMic: callerToggleMic, micOn: callerMicOn,
+    toggleCamera: callerToggleCamera, cameraOn: callerCameraOn,
+    callMode: activeCallMode,
+    localVideoRef: callerLocalVideoRef, remoteVideoRef: callerRemoteVideoRef,
+  } = useWebRTC(setCallStatus, handleCallerSignal);
+
+  // E2E — declared here so hook order is always stable
+  const { encrypt, decrypt } = useE2E(otherUserId || null);
+
+  // ── Derived ───────────────────────────────────────────────────────────────────
   const messages = rawMessages.map((m) => ({
     ...m,
     senderName: m.senderId === user?.id ? (user?.displayName ?? 'Tú') : chatName,
     decryptedContent: (m as any).encrypted ? decryptedMap[m.id] : undefined,
   }));
 
-  // Decrypt encrypted messages
+  // ── Effects ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     const encrypted = rawMessages.filter((m) => (m as any).encrypted && m.content && !decryptedMap[m.id]);
     if (encrypted.length === 0) return;
@@ -76,7 +81,6 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     });
   }, [rawMessages, decrypt]);
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -84,7 +88,6 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (isAtBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // Mark as read when chat opens or app comes back to foreground
   useEffect(() => {
     const markAsRead = () => {
       if (chatId && user) {
@@ -92,15 +95,10 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
         sendRead(chatId);
       }
     };
-
-    markAsRead(); // Mark on mount / chat switch
-
-    // Desktop: focus event
+    markAsRead();
     window.addEventListener('focus', markAsRead);
-    // Mobile PWA: visibilitychange is more reliable than focus
     const onVisible = () => { if (document.visibilityState === 'visible') markAsRead(); };
     document.addEventListener('visibilitychange', onVisible);
-
     return () => {
       window.removeEventListener('focus', markAsRead);
       document.removeEventListener('visibilitychange', onVisible);
@@ -120,6 +118,64 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (recState.seconds >= 60) handleStopRec();
   }, [recState.seconds]);
 
+  const handleVoicePointerMove = useCallback((e: PointerEvent) => {
+    if (!recState.isRecording || recState.isLocked) return;
+    const dy = touchStartY.current - e.clientY;
+    const progress = Math.max(0, Math.min(1, dy / 80));
+    setLockProgress(progress);
+    if (progress >= 1) lockRec();
+  }, [recState.isRecording, recState.isLocked, lockRec]);
+
+  const handleVoicePointerUp = useCallback(async () => {
+    if (!holdingRef.current) return;
+    holdingRef.current = false;
+    if (!recState.isLocked && recState.isRecording) await handleStopRec();
+  }, [recState.isLocked, recState.isRecording]);
+
+  useEffect(() => {
+    window.addEventListener('pointermove', handleVoicePointerMove);
+    window.addEventListener('pointerup', handleVoicePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handleVoicePointerMove);
+      window.removeEventListener('pointerup', handleVoicePointerUp);
+    };
+  }, [handleVoicePointerMove, handleVoicePointerUp]);
+
+  useEffect(() => {
+    if (!chatId || !user?.id) return;
+    fetch(`/api/chats/${chatId}/members`)
+      .then((r) => r.json())
+      .then((members: { id: string }[]) => {
+        const other = members.find((m) => m.id !== user.id);
+        if (other) { setOtherUserId(other.id); otherUserIdRef.current = other.id; }
+      })
+      .catch(() => {});
+  }, [chatId, user?.id]);
+
+  useEffect(() => {
+    return on('call', (payload) => {
+      if (payload.fromUserId !== otherUserIdRef.current && payload.toUserId !== otherUserIdRef.current) return;
+      if (payload.action === 'answer') setCallStatus('connected');
+      if (payload.action === 'reject') setCallStatus('rejected');
+      if (payload.action === 'end') { setCallStatus('ended'); callerHangUp(); }
+    });
+  }, [on, callerHangUp]);
+
+  useEffect(() => {
+    return on('webrtc_signal', (payload) => {
+      if (payload.fromUserId !== otherUserIdRef.current) return;
+      if (payload.signalType === 'answer') {
+        void receiveAnswer(payload.data as RTCSessionDescriptionInit).catch((error) => {
+          console.error('[Call] Failed to apply remote answer', error);
+          callerHangUp();
+          toast({ variant: 'destructive', title: 'No se pudo conectar la llamada', description: getWebRTCErrorMessage(error) });
+        });
+      }
+      if (payload.signalType === 'ice') callerReceiveIce(payload.data as RTCIceCandidateInit);
+    });
+  }, [on, receiveAnswer, callerReceiveIce, callerHangUp, toast]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!input.trim() || !user) return;
@@ -159,29 +215,6 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (!ok) toast({ title: 'No se pudo acceder al micrófono', variant: 'destructive' });
   };
 
-  const handleVoicePointerMove = useCallback((e: PointerEvent) => {
-    if (!recState.isRecording || recState.isLocked) return;
-    const dy = touchStartY.current - e.clientY;
-    const progress = Math.max(0, Math.min(1, dy / 80));
-    setLockProgress(progress);
-    if (progress >= 1) lockRec();
-  }, [recState.isRecording, recState.isLocked, lockRec]);
-
-  const handleVoicePointerUp = useCallback(async () => {
-    if (!holdingRef.current) return;
-    holdingRef.current = false;
-    if (!recState.isLocked && recState.isRecording) await handleStopRec();
-  }, [recState.isLocked, recState.isRecording]);
-
-  useEffect(() => {
-    window.addEventListener('pointermove', handleVoicePointerMove);
-    window.addEventListener('pointerup', handleVoicePointerUp);
-    return () => {
-      window.removeEventListener('pointermove', handleVoicePointerMove);
-      window.removeEventListener('pointerup', handleVoicePointerUp);
-    };
-  }, [handleVoicePointerMove, handleVoicePointerUp]);
-
   const handleStopRec = async () => {
     const result = await stopRec();
     if (!result) return;
@@ -200,66 +233,18 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
 
   const handleScrollTo = useCallback((msgId: number) => {
     const el = document.getElementById(`msg-${msgId}`);
-    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1000); }
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 1000);
+    }
   }, []);
 
-  // E2E encryption
-  const { encrypt, decrypt } = useE2E(otherUserId || null);
-
-  useEffect(() => {
-    if (!chatId || !user?.id) return;
-    fetch(`/api/chats/${chatId}/members`)
-      .then((r) => r.json())
-      .then((members: { id: string }[]) => {
-        const other = members.find((m) => m.id !== user.id);
-        if (other) { setOtherUserId(other.id); otherUserIdRef.current = other.id; }
-      })
-      .catch(() => {});
-  }, [chatId, user?.id]);
-
-  // Listen for call responses (answer/reject/end from the other side)
-  useEffect(() => {
-    return on('call', (payload) => {
-      if (payload.fromUserId !== otherUserIdRef.current && payload.toUserId !== otherUserIdRef.current) return;
-      if (payload.action === 'answer') setCallStatus('connected'); // callee accepted → show connected immediately
-      if (payload.action === 'reject') setCallStatus('rejected');
-      if (payload.action === 'end') { setCallStatus('ended'); callerHangUp(); }
-    });
-  }, [on, callerHangUp]);
-
-  // Receive WebRTC signals for the CALLER (answer + ICE from the callee)
-  useEffect(() => {
-    return on('webrtc_signal', (payload) => {
-      if (payload.fromUserId !== otherUserIdRef.current) return;
-      if (payload.signalType === 'answer') {
-        void receiveAnswer(payload.data as RTCSessionDescriptionInit).catch((error) => {
-          console.error('[Call] Failed to apply remote answer', error);
-          callerHangUp();
-          toast({
-            variant: 'destructive',
-            title: 'No se pudo conectar la llamada',
-            description: getWebRTCErrorMessage(error),
-          });
-        });
-      }
-      if (payload.signalType === 'ice') callerReceiveIce(payload.data as RTCIceCandidateInit);
-    });
-  }, [on, receiveAnswer, callerReceiveIce, callerHangUp, toast]);
-
-  const handleVideoCall = async () => {
-    setCallMode('video');
-    await handleCallWithMode('video');
-  };
-
-  const handleCall = async () => {
-    setCallMode('audio');
-    await handleCallWithMode('audio');
-  };
+  const handleVideoCall = async () => { setCallMode('video'); await handleCallWithMode('video'); };
+  const handleCall = async () => { setCallMode('audio'); await handleCallWithMode('audio'); };
 
   const handleCallWithMode = async (mode: 'audio' | 'video') => {
     let targetId = otherUserId;
-
-    // Fallback: refetch members if otherUserId is empty
     if (!targetId && chatId && user?.id) {
       try {
         const r = await fetch(`/api/chats/${chatId}/members`);
@@ -268,18 +253,14 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
         if (other) { targetId = other.id; setOtherUserId(other.id); otherUserIdRef.current = other.id; }
       } catch {}
     }
-
     if (!targetId) {
       toast({ variant: 'destructive', title: 'No se pudo iniciar la llamada', description: 'No se encontró el participante.' });
       return;
     }
-
     otherUserIdRef.current = targetId;
     setCallStatus('calling');
     setCallOpen(true);
-
     try {
-      // Send incoming signal and start call simultaneously — answer is now buffered
       sendCall(targetId, 'incoming');
       await startCall(mode);
     } catch (error) {
@@ -287,11 +268,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
       callerHangUp();
       setCallOpen(false);
       setCallStatus('idle');
-      toast({
-        variant: 'destructive',
-        title: 'No se pudo iniciar la llamada',
-        description: getWebRTCErrorMessage(error),
-      });
+      toast({ variant: 'destructive', title: 'No se pudo iniciar la llamada', description: getWebRTCErrorMessage(error) });
     }
   };
 
@@ -302,6 +279,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     setCallStatus('idle');
   };
 
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full bg-background relative overflow-hidden">
       <div className="absolute top-[-20%] left-[20%] w-[500px] h-[500px] bg-secondary/5 rounded-full blur-[120px] pointer-events-none" />
@@ -331,16 +309,10 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleVideoCall}
-            className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all"
-          >
+          <button onClick={handleVideoCall} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all">
             <Video className="w-4 h-4 md:w-5 md:h-5" />
           </button>
-          <button
-            onClick={handleCall}
-            className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all"
-          >
+          <button onClick={handleCall} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-foreground hover:bg-secondary hover:text-secondary-foreground hover:shadow-lg hover:shadow-secondary/20 transition-all">
             <Phone className="w-4 h-4 md:w-5 md:h-5" />
           </button>
         </div>
@@ -408,18 +380,11 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
                 style={{ minHeight: '40px', maxHeight: '120px' }}
               />
               {input.trim() ? (
-                <button
-                  onClick={handleSend}
-                  className="w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground hover:shadow-lg hover:shadow-primary/30 transition-all active:scale-95 flex-shrink-0"
-                >
+                <button onClick={handleSend} className="w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground hover:shadow-lg hover:shadow-primary/30 transition-all active:scale-95 flex-shrink-0">
                   <Send className="w-4 h-4 ml-0.5" />
                 </button>
               ) : (
-                <button
-                  ref={voiceBtnRef}
-                  onPointerDown={handleVoicePointerDown}
-                  className="w-9 h-9 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors flex-shrink-0 touch-none select-none"
-                >
+                <button ref={voiceBtnRef} onPointerDown={handleVoicePointerDown} className="w-9 h-9 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors flex-shrink-0 touch-none select-none">
                   <Mic className="w-4 h-4 md:w-5 md:h-5" />
                 </button>
               )}
