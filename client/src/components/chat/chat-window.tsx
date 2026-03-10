@@ -80,7 +80,12 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
       const plain = await decrypt(m.content);
       setDecryptedMap((prev) => ({ ...prev, [m.id]: plain }));
     });
-  }, [rawMessages, decrypt]);
+  }, [rawMessages, decrypt, otherUserId]);
+
+  // Reset decrypted cache when switching chats
+  useEffect(() => {
+    setDecryptedMap({});
+  }, [chatId]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -188,13 +193,16 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     e?.preventDefault();
     if (!input.trim() || !user) return;
     const { text: encContent, encrypted } = await encrypt(input.trim());
-    sendMessage(chatId, encContent, replyTo ? {
-      replyToId: replyTo.id,
-      replyToText: replyTo.content,
-      replyToSenderName: replyTo.senderName,
-      replyToSenderId: replyTo.senderId,
-      replyToIsAudio: replyTo.type === 'audio',
-    } : { encrypted } as any);
+    sendMessage(chatId, encContent, {
+      encrypted,
+      ...(replyTo ? {
+        replyToId: replyTo.id,
+        replyToText: replyTo.content,
+        replyToSenderName: replyTo.senderName,
+        replyToSenderId: replyTo.senderId,
+        replyToIsAudio: replyTo.type === 'audio',
+      } : {}),
+    } as any);
     setInput('');
     setReplyTo(null);
     inputRef.current?.focus();
