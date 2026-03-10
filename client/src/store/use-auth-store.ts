@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { disconnectWs } from '@/hooks/use-websocket';
 import { persist } from 'zustand/middleware';
 import type { User } from '@shared/schema';
 
@@ -19,7 +20,13 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       _hasHydrated: false,
       login: (user, token) => set({ user, token }),
-      logout: () => set({ user: null, token: null }),
+      logout: () => {
+        // Disconnect WebSocket so the old user isn't seen as online
+        try { disconnectWs(); } catch {}
+        // Clear E2E keys from IndexedDB on logout so next user starts fresh
+        try { indexedDB.deleteDatabase('luxchat-e2e'); } catch {}
+        set({ user: null, token: null });
+      },
       setUser: (user) => set({ user }),
       setHasHydrated: (v) => set({ _hasHydrated: v }),
     }),

@@ -137,7 +137,8 @@ export function useChats(userId?: string) {
       return res.json() as Promise<(Chat & { name?: string; avatarUrl?: string; lastMessage?: string; unread?: number })[]>;
     },
     enabled: !!userId,
-    refetchInterval: 5000,
+    refetchInterval: 30000,
+    refetchOnWindowFocus: true,
   });
 }
 

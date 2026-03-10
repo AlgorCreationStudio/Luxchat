@@ -72,6 +72,9 @@ export function MessageBubble({ message, isMe, onReply, onReact, onDelete, onScr
           {/* Actions (left for outgoing, right for incoming handled below) */}
           {isMe && showActions && (
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button onClick={() => onReply(message)} className="p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors text-xs px-2">
+                ↩
+              </button>
               <button onClick={() => setShowReactions(!showReactions)} className="p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors">
                 <SmilePlus className="w-3.5 h-3.5" />
               </button>

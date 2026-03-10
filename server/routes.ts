@@ -21,6 +21,7 @@ const WsSendMessage = z.object({
   replyToSenderName: z.string().optional(),
   replyToSenderId: z.string().optional(),
   replyToIsAudio: z.boolean().optional(),
+  encrypted: z.boolean().optional(),  // E2E flag
 });
 
 const WsTyping = z.object({ chatId: z.string(), userId: z.string(), isTyping: z.boolean(), name: z.string() });
@@ -140,17 +141,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 
   // Users
-  app.post(api.users.create.path, async (req, res) => {
-    try {
-      const input = api.users.create.input.parse(req.body);
-      const user = await storage.createUser(input);
-      res.status(201).json(user);
-    } catch (err) {
-      if (err instanceof z.ZodError)
-        return res.status(400).json({ message: err.errors[0].message });
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
+  // NOTE: /api/users POST (legacy passwordless creation) is intentionally removed.
+  // User creation goes through /api/auth/register which hashes passwords.
 
   // Find user by tag — MUST be before /api/users/:id to avoid Express conflict
   app.get("/api/users/by-tag/:tag", async (req, res) => {
@@ -230,8 +222,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Update profile (name, avatar)
   app.patch('/api/users/:id/profile', async (req, res) => {
     const { displayName, avatarUrl } = req.body;
+    if (displayName !== undefined && !displayName?.trim()) {
+      return res.status(400).json({ message: 'El nombre no puede estar vacío' });
+    }
     try {
-      const user = await storage.updateUserProfile(req.params.id, { displayName, avatarUrl });
+      const update: { displayName?: string; avatarUrl?: string } = {};
+      if (displayName?.trim()) update.displayName = displayName.trim();
+      if (avatarUrl !== undefined) update.avatarUrl = avatarUrl;
+      const user = await storage.updateUserProfile(req.params.id, update);
       const { passwordHash: _, ...safeUser } = user as any;
       res.json(safeUser);
     } catch (err) {
@@ -370,8 +368,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
         if (type === "message") {
           const p = WsSendMessage.parse(payload);
-          const saved = await storage.createMessage(p);
-          const members = await storage.getChatMembers(p.chatId);
+          // Security: enforce senderId from authenticated WS connection, not from client payload
+          const secureMsg = { ...p, senderId: userId || p.senderId };
+          const saved = await storage.createMessage(secureMsg);
+          const members = await storage.getChatMembers(secureMsg.chatId);
           broadcast(clients, memberIds(members), {
             type: "message",
             payload: { ...saved, createdAt: saved.createdAt?.toISOString() ?? new Date().toISOString() },
@@ -379,10 +379,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
           // Push to offline members
           for (const memberId of memberIds(members)) {
-            if (memberId === p.senderId) continue;
-            if (clients.get(memberId)?.readyState === 1) continue; // already online via WS
+            if (memberId === secureMsg.senderId) continue;
+            // Skip push if user has any open WS connection
+            const memberSockets = clients.get(memberId);
+            if (memberSockets && Array.from(memberSockets).some((s) => s.readyState === WebSocket.OPEN)) continue;
             const sender = await storage.getUser(p.senderId);
-            const body = p.type === 'audio' ? '🎤 Nota de voz' : (p.content || '...');
+            const body = p.type === 'audio' ? '🎤 Nota de voz' : p.encrypted ? '🔒 Mensaje cifrado' : (p.content || '...');
             await sendPushToUser(memberId, {
               title: sender?.displayName ?? 'LuxChat',
               body,
@@ -436,6 +438,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
         if (type === "delete") {
           const p = WsDelete.parse(payload);
+          // Security: only the message sender (or userId from WS auth) can delete
+          const msg = await storage.getMessage(p.messageId);
+          if (!msg || (userId && msg.senderId !== userId)) {
+            console.warn('[WS] Delete denied: not sender', userId, msg?.senderId);
+            return;
+          }
           await storage.deleteMessage(p.messageId);
           const members = await storage.getChatMembers(p.chatId);
           broadcast(clients, memberIds(members), { type: "delete", payload: p });

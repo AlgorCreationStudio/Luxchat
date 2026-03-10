@@ -160,7 +160,16 @@ export function Sidebar() {
                 onClick={() => setLocation(`/chat/${chat.id}`)}
                 className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 cursor-pointer transition-colors group"
               >
-                <Avatar fallback={chat.name || 'Chat'} src={chat.avatarUrl} />
+                <div className="relative">
+                  <Avatar fallback={chat.name || 'Chat'} src={chat.avatarUrl} />
+                  {/* Online dot: cross-reference with contacts cache */}
+                  {(() => {
+                    const contact = contacts.find((ct) => chat.name === ct.displayName);
+                    return contact?.status === 'online'
+                      ? <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-card bg-green-400" />
+                      : null;
+                  })()}
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-foreground truncate group-hover:text-primary transition-colors text-sm">
                     {chat.name || 'Direct Message'}

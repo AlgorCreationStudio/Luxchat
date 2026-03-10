@@ -21,6 +21,7 @@ type WsEventMap = {
   contact_request: (payload: { fromUserId: string; fromName: string }) => void;
   webrtc_signal: (payload: { fromUserId: string; signalType: 'offer' | 'answer' | 'ice'; data: unknown }) => void;
   presence: (payload: { userId: string; status: 'online' | 'offline'; lastSeen?: string }) => void;
+  message: (payload: Message) => void;
 };
 
 // ─── SINGLETON WebSocket ─────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ function connectSingleton(userId: string) {
 
   ws.onopen = () => {
     console.log('[WS] Connected');
+    flushPending();
     // Keepalive ping every 20s to prevent Railway/proxy timeout
     const ping = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -95,18 +97,32 @@ function connectSingleton(userId: string) {
   ws.onerror = () => ws.close();
 }
 
+export function disconnectWs() {
+  onMessageCb = null;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (singletonSocket) {
+    singletonSocket.onclose = null; // prevent auto-reconnect
+    singletonSocket.close();
+    singletonSocket = null;
+    singletonUserId = null;
+  }
+}
+
+const pendingMessages: string[] = [];
+
+function flushPending() {
+  while (pendingMessages.length > 0 && singletonSocket?.readyState === WebSocket.OPEN) {
+    singletonSocket.send(pendingMessages.shift()!);
+  }
+}
+
 function sendSingleton(data: object) {
   const json = JSON.stringify(data);
   if (singletonSocket?.readyState === WebSocket.OPEN) {
     singletonSocket.send(json);
   } else {
-    // Retry once after connection
-    const retry = () => {
-      if (singletonSocket?.readyState === WebSocket.OPEN) {
-        singletonSocket.send(json);
-      }
-    };
-    setTimeout(retry, 500);
+    // Queue — will be flushed on reconnect (max 20 messages to avoid memory leak)
+    if (pendingMessages.length < 20) pendingMessages.push(json);
   }
 }
 
@@ -154,8 +170,9 @@ export function useWebSocket() {
           return [...old, newMsg];
         });
         queryClient.invalidateQueries({ queryKey: ['chats', user.id] });
+        globalListeners.get('message')?.forEach((fn) => fn(newMsg));
         if (newMsg.senderId !== user.id) {
-          const content = newMsg.type === 'audio' ? '🎤 Nota de voz' : newMsg.content;
+          const content = newMsg.type === 'audio' ? '🎤 Nota de voz' : newMsg.encrypted ? '🔒 Mensaje cifrado' : newMsg.content;
           showNotification('LuxChat', content);
         }
       }
@@ -195,8 +212,9 @@ export function useWebSocket() {
     };
 
     return () => {
-      // Don't close the socket on unmount — other components still use it
-      // Just clear the message callback if we were the last one
+      // Don't close the socket on unmount — other components still use it.
+      // Clear the callback so stale closures don't fire after logout.
+      onMessageCb = null;
     };
   }, [user?.id, queryClient]);
 

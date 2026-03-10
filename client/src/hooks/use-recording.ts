@@ -18,6 +18,7 @@ export function useRecording() {
   const streamRef = useRef<MediaStream | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mimeRef = useRef<string>('audio/webm');
+  const secondsRef = useRef<number>(0);
 
   const clearTimer = () => {
     if (intervalRef.current) {
@@ -45,14 +46,10 @@ export function useRecording() {
       mediaRecRef.current = rec;
 
       setState({ isRecording: true, isLocked: false, seconds: 0 });
+      secondsRef.current = 0;
       intervalRef.current = setInterval(() => {
-        setState((prev) => {
-          if (prev.seconds >= 59) {
-            // Auto stop at 60s — handled in component
-            return { ...prev, seconds: prev.seconds + 1 };
-          }
-          return { ...prev, seconds: prev.seconds + 1 };
-        });
+        secondsRef.current += 1;
+        setState((prev) => ({ ...prev, seconds: secondsRef.current }));
       }, 1000);
       navigator.vibrate?.(50);
       return true;
@@ -72,7 +69,7 @@ export function useRecording() {
       if (!rec) { resolve(null); return; }
 
       const mime = mimeRef.current;
-      const seconds = state.seconds;
+      const seconds = secondsRef.current;
       clearTimer();
 
       rec.onstop = () => {
@@ -81,7 +78,8 @@ export function useRecording() {
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
         mediaRecRef.current = null;
-        setState({ isRecording: false, isLocked: false, seconds: 0 });
+        secondsRef.current = 0;
+    setState({ isRecording: false, isLocked: false, seconds: 0 });
         resolve(seconds >= 1 ? { blob, mime, seconds } : null);
       };
       rec.stop();

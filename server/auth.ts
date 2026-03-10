@@ -5,7 +5,10 @@ import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
-const JWT_SECRET = process.env.JWT_SECRET || "luxchat-secret-key-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET ?? (() => {
+  if (process.env.NODE_ENV === 'production') throw new Error('JWT_SECRET must be set in production');
+  return 'luxchat-dev-secret-not-for-production';
+})();
 
 export interface AuthRequest extends Request {
   userId?: string;

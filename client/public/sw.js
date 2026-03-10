@@ -39,4 +39,4 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-self.addEventListener('fetch', () => {});
+// No fetch handler — let browser handle all requests normally

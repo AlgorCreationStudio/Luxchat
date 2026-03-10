@@ -74,13 +74,21 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
 
   // ── Effects ───────────────────────────────────────────────────────────────────
   useEffect(() => {
-    const encrypted = rawMessages.filter((m) => (m as any).encrypted && m.content && !decryptedMap[m.id]);
+    // Re-decrypt if: message not yet decrypted, OR previously failed (starts with 🔒)
+    const encrypted = rawMessages.filter((m) => {
+      if (!(m as any).encrypted || !m.content) return false;
+      const cached = decryptedMap[m.id];
+      return !cached || cached.startsWith('🔒');
+    });
     if (encrypted.length === 0) return;
     // Wait for E2E key to be ready before decrypting
     waitForKey().then(() => {
       encrypted.forEach(async (m) => {
         const plain = await decrypt(m.content);
-        setDecryptedMap((prev) => ({ ...prev, [m.id]: plain }));
+        // Only cache if decryption succeeded (don't cache failures so we retry)
+        if (!plain.startsWith('🔒')) {
+          setDecryptedMap((prev) => ({ ...prev, [m.id]: plain }));
+        }
       });
     });
   }, [rawMessages, decrypt, otherUserId, waitForKey]);
@@ -125,7 +133,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
 
   useEffect(() => {
     if (recState.seconds >= 60) handleStopRec();
-  }, [recState.seconds]);
+  }, [recState.seconds, handleStopRec]);
 
   const handleVoicePointerMove = useCallback((e: PointerEvent) => {
     if (!recState.isRecording || recState.isLocked) return;
@@ -139,7 +147,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (!holdingRef.current) return;
     holdingRef.current = false;
     if (!recState.isLocked && recState.isRecording) await handleStopRec();
-  }, [recState.isLocked, recState.isRecording]);
+  }, [recState.isLocked, recState.isRecording, handleStopRec]);
 
   useEffect(() => {
     window.addEventListener('pointermove', handleVoicePointerMove);
@@ -192,6 +200,35 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   }, [on, receiveAnswer, callerReceiveIce, callerHangUp, toast]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
+  const handleMediaSend = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: 'Archivo muy grande', description: 'Máximo 5MB', variant: 'destructive' });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const dataUrl = ev.target?.result as string;
+      sendMessage(chatId, '', {
+        type: 'media',
+        mediaData: dataUrl,
+        mediaType: file.type,
+        ...(replyTo ? {
+          replyToId: replyTo.id,
+          replyToText: replyTo.content,
+          replyToSenderName: replyTo.senderName,
+          replyToSenderId: replyTo.senderId,
+          replyToIsAudio: false,
+        } : {}),
+      } as any);
+      setReplyTo(null);
+    };
+    reader.readAsDataURL(file);
+    // Reset input so same file can be selected again
+    e.target.value = '';
+  };
+
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!input.trim() || !user) return;
@@ -234,7 +271,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (!ok) toast({ title: 'No se pudo acceder al micrófono', variant: 'destructive' });
   };
 
-  const handleStopRec = async () => {
+  const handleStopRec = useCallback(async () => {
     const result = await stopRec();
     if (!result) return;
     const { blob, mime, seconds } = result;
@@ -246,7 +283,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
       setReplyTo(null);
     };
     reader.readAsDataURL(blob);
-  };
+  }, [stopRec, chatId, sendAudio, replyTo, toast]);
 
   const handleCancelRec = () => { cancelRec(); setLockProgress(0); };
 
@@ -357,7 +394,10 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
                 <MessageBubble
                   message={msg}
                   isMe={msg.senderId === user?.id}
-                  onReply={setReplyTo}
+                  onReply={(msg) => setReplyTo({
+                  ...msg,
+                  content: msg.decryptedContent || msg.content,
+                })}
                   onReact={(msgId, emoji) => sendReaction(msgId, emoji)}
                   onDelete={(msgId) => sendDelete(msgId, chatId)}
                   onScrollTo={handleScrollTo}
@@ -388,7 +428,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
             <div className="flex items-end gap-2 px-3 md:px-4 py-3">
               <label className="w-9 h-9 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/5 cursor-pointer transition-colors flex-shrink-0">
                 <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
-                <input type="file" accept="image/*,video/*" className="hidden" onChange={() => {}} />
+                <input type="file" accept="image/*,video/*" className="hidden" onChange={handleMediaSend} />
               </label>
               <textarea
                 ref={inputRef}

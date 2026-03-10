@@ -91,5 +91,32 @@ export function useE2E(otherUserId: string | null) {
   // Expose a way to know when key is ready (for re-triggering decryption)
   const waitForKey = useCallback(() => keyReadyPromiseRef.current, []);
 
-  return { encrypt, decrypt, isReady: () => readyRef.current, waitForKey };
+  const refreshKey = useCallback(() => {
+    // Trigger key re-derivation by resetting state (effect depends on otherUserId but
+    // won't re-run since it hasn't changed — use a timestamp trick via a state reset)
+    sharedKeyRef.current = null;
+    readyRef.current = false;
+    let resolve: () => void;
+    keyReadyPromiseRef.current = new Promise<void>((res) => { resolve = res; });
+    keyReadyResolveRef.current = resolve!;
+
+    if (!user?.id || !otherUserId) { keyReadyResolveRef.current?.(); return; }
+    (async () => {
+      try {
+        const myKeyPair = await getOrCreateKeyPair();
+        await uploadPublicKey(user.id, myKeyPair.publicKeyJwk);
+        const theirPublicKeyJwk = await fetchPublicKey(otherUserId);
+        if (!theirPublicKeyJwk) return;
+        const sharedKey = await getSharedKey(myKeyPair.privateKey, theirPublicKeyJwk);
+        sharedKeyRef.current = sharedKey;
+        readyRef.current = true;
+      } catch (err) {
+        console.warn('[E2E] refreshKey failed:', err);
+      } finally {
+        keyReadyResolveRef.current?.();
+      }
+    })();
+  }, [user?.id, otherUserId]);
+
+  return { encrypt, decrypt, isReady: () => readyRef.current, waitForKey, refreshKey };
 }

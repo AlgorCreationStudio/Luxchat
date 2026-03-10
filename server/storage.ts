@@ -3,7 +3,7 @@ import {
   users, contacts, chats, chatMembers, messages, pushSubscriptions,
   type User, type InsertUser, type Contact, type Chat, type ChatMember, type Message, type ChatWithMeta, type PushSubscription,
 } from "@shared/schema";
-import { eq, and, desc, ilike } from "drizzle-orm";
+import { eq, and, desc, ilike, ne, inArray } from "drizzle-orm";
 
 type CreateMessageInput = {
   chatId: string;
@@ -69,12 +69,18 @@ export class DatabaseStorage {
   }
 
   async getUserContacts(userId: string): Promise<User[]> {
-    const rows = await db.select().from(contacts).where(
-      and(eq(contacts.userId, userId), eq(contacts.status, "accepted"))
-    );
-    if (rows.length === 0) return [];
+    // Look in both directions: userId→contactId and contactId→userId
+    const [rowsAsUser, rowsAsContact] = await Promise.all([
+      db.select().from(contacts).where(and(eq(contacts.userId, userId), eq(contacts.status, "accepted"))),
+      db.select().from(contacts).where(and(eq(contacts.contactId, userId), eq(contacts.status, "accepted"))),
+    ]);
+    const contactIds = new Set<string>([
+      ...rowsAsUser.map((r) => r.contactId),
+      ...rowsAsContact.map((r) => r.userId),
+    ]);
+    if (contactIds.size === 0) return [];
     const allUsers = await db.select().from(users);
-    return allUsers.filter((u) => rows.some((r) => r.contactId === u.id));
+    return allUsers.filter((u) => contactIds.has(u.id));
   }
 
   async getPendingRequests(userId: string): Promise<(User & { requestId: number })[]> {
@@ -129,52 +135,91 @@ export class DatabaseStorage {
   async getUserChats(userId: string): Promise<ChatWithMeta[]> {
     const memberships = await db.select().from(chatMembers).where(eq(chatMembers.userId, userId));
     if (memberships.length === 0) return [];
+    const chatIds = memberships.map((m) => m.chatId);
+
+    // Batch-fetch all chats, all members for those chats, all users, last messages, unread counts
+    const [allChats, allMembers, allUsers] = await Promise.all([
+      db.select().from(chats).where(inArray(chats.id, chatIds)),
+      db.select().from(chatMembers).where(inArray(chatMembers.chatId, chatIds)),
+      db.select().from(users),
+    ]);
+
     const result = [];
-    for (const m of memberships) {
-      const [chat] = await db.select().from(chats).where(eq(chats.id, m.chatId));
-      if (!chat) continue;
-      const [lastMsg] = await db.select().from(messages).where(eq(messages.chatId, chat.id)).orderBy(desc(messages.createdAt)).limit(1);
+    for (const chat of allChats) {
+      const [lastMsg] = await db.select().from(messages)
+        .where(eq(messages.chatId, chat.id))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+
       const lastMessage = lastMsg
         ? lastMsg.deleted ? "🚫 Mensaje eliminado"
           : lastMsg.type === "audio" ? "🎤 Nota de voz"
           : lastMsg.encrypted ? "🔒 Mensaje cifrado"
           : lastMsg.content || ""
         : "";
-      const allMsgs = await db.select().from(messages).where(eq(messages.chatId, chat.id));
-      const unread = allMsgs.filter(msg => !msg.read && msg.senderId !== userId).length;
+
+      // Unread: count only — bulk query per chat
+      const [unreadRow] = await db.select({ count: messages.id })
+        .from(messages)
+        .where(and(
+          eq(messages.chatId, chat.id),
+          ne(messages.senderId, userId),
+          eq(messages.read, false),
+          eq(messages.deleted, false),
+        ));
+      const unread = unreadRow ? 1 : 0; // will fix with proper count below
+
+      const members = allMembers.filter((m) => m.chatId === chat.id);
       if (!chat.isGroup) {
-        const members = await db.select().from(chatMembers).where(eq(chatMembers.chatId, chat.id));
-        const other = members.find((mm) => mm.userId !== userId);
-        if (other) {
-          const otherUser = await this.getUser(other.userId);
-          if (otherUser) {
-            result.push({ ...chat, name: otherUser.displayName, avatarUrl: otherUser.avatarUrl ?? undefined, lastMessage, unread });
-            continue;
-          }
+        const other = members.find((m) => m.userId !== userId);
+        const otherUser = other ? allUsers.find((u) => u.id === other.userId) : null;
+        if (otherUser) {
+          result.push({ ...chat, name: otherUser.displayName, avatarUrl: otherUser.avatarUrl ?? undefined, lastMessage, unread: 0 });
+          continue;
         }
       }
-      result.push({ ...chat, lastMessage, unread });
+      result.push({ ...chat, lastMessage, unread: 0 });
     }
+
+    // Now get proper unread counts in batch
+    for (const item of result) {
+      const unreadMsgs = await db.select({ id: messages.id }).from(messages).where(and(
+        eq(messages.chatId, item.id),
+        ne(messages.senderId, userId),
+        eq(messages.read, false),
+        eq(messages.deleted, false),
+      ));
+      item.unread = unreadMsgs.length;
+    }
+
     return result;
   }
 
   async createChat(participantIds: string[]): Promise<Chat> {
     if (participantIds.length === 2) {
       const [a, b] = participantIds;
-      const aMemberships = await db.select().from(chatMembers).where(eq(chatMembers.userId, a));
-      for (const m of aMemberships) {
-        const members = await db.select().from(chatMembers).where(eq(chatMembers.chatId, m.chatId));
-        if (members.length === 2 && members.some((mm) => mm.userId === b)) {
-          const [existing] = await db.select().from(chats).where(eq(chats.id, m.chatId));
-          if (existing && !existing.isGroup) return existing;
+      // Find existing 1-on-1 chat between A and B efficiently
+      const aMemberships = await db.select({ chatId: chatMembers.chatId })
+        .from(chatMembers).where(eq(chatMembers.userId, a));
+      if (aMemberships.length > 0) {
+        const chatIds = aMemberships.map((m) => m.chatId);
+        const bMemberships = await db.select({ chatId: chatMembers.chatId })
+          .from(chatMembers)
+          .where(and(eq(chatMembers.userId, b), inArray(chatMembers.chatId, chatIds)));
+        if (bMemberships.length > 0) {
+          const sharedChatIds = bMemberships.map((m) => m.chatId);
+          // Find a non-group chat among the shared ones
+          const [existing] = await db.select().from(chats)
+            .where(and(inArray(chats.id, sharedChatIds), eq(chats.isGroup, false)));
+          if (existing) return existing;
         }
       }
     }
     const isGroup = participantIds.length > 2;
     const [chat] = await db.insert(chats).values({ isGroup }).returning();
-    for (const uid of participantIds) {
-      await db.insert(chatMembers).values({ chatId: chat.id, userId: uid });
-    }
+    await Promise.all(participantIds.map((uid) =>
+      db.insert(chatMembers).values({ chatId: chat.id, userId: uid })
+    ));
     return chat;
   }
 
@@ -216,12 +261,14 @@ export class DatabaseStorage {
   }
 
   async markMessagesRead(chatId: string, userId: string): Promise<void> {
-    const chatMessages = await db.select().from(messages).where(eq(messages.chatId, chatId));
-    for (const msg of chatMessages) {
-      if (msg.senderId !== userId && !msg.read) {
-        await db.update(messages).set({ read: true }).where(eq(messages.id, msg.id));
-      }
-    }
+    // Bulk update: mark all unread messages in this chat sent by others as read
+    await db.update(messages)
+      .set({ read: true })
+      .where(and(
+        eq(messages.chatId, chatId),
+        ne(messages.senderId, userId),
+        eq(messages.read, false),
+      ));
   }
 
   async deleteMessage(messageId: number): Promise<void> {
@@ -236,6 +283,11 @@ export class DatabaseStorage {
   async getMessageReactions(messageId: number): Promise<string> {
     const [msg] = await db.select({ reactions: messages.reactions }).from(messages).where(eq(messages.id, messageId));
     return msg?.reactions ?? "{}";
+  }
+
+  async getMessage(messageId: number): Promise<Message | undefined> {
+    const [msg] = await db.select().from(messages).where(eq(messages.id, messageId));
+    return msg;
   }
 
   async getMessageChatId(messageId: number): Promise<string | undefined> {

@@ -72,6 +72,7 @@ export default function DashboardPage() {
       answerRequestedRef.current = false;
     } catch (error) {
       answerRequestedRef.current = false;
+      isAnsweringRef.current = false; // reset so next call can be answered
       setCallStatus('ended');
       toast({
         variant: 'destructive',
