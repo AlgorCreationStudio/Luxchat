@@ -38,8 +38,8 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const otherUserIdRef = React.useRef('');
   const [callMode, setCallMode] = React.useState<'audio' | 'video'>('audio');
 
-  // E2E encryption
-  const { encrypt, decrypt } = useE2E(otherUserId || null);
+  // Fetch chat members to get the other participant's userId
+  const [otherUserId, setOtherUserId] = React.useState('');
 
   // WebRTC caller — hook lives here so it persists across modal re-renders
   const handleCallerSignal = useCallback((type: 'offer' | 'answer' | 'ice', data: unknown) => {
@@ -203,8 +203,9 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1000); }
   }, []);
 
-  // Fetch chat members to get the other participant's userId
-  const [otherUserId, setOtherUserId] = React.useState('');
+  // E2E encryption
+  const { encrypt, decrypt } = useE2E(otherUserId || null);
+
   useEffect(() => {
     if (!chatId || !user?.id) return;
     fetch(`/api/chats/${chatId}/members`)
