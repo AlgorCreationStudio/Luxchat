@@ -64,7 +64,7 @@ export function useContacts(userId?: string) {
       return res.json() as Promise<User[]>;
     },
     enabled: !!userId,
-    refetchInterval: 5000,
+    refetchInterval: 30000,
   });
 }
 

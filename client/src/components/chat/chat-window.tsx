@@ -39,6 +39,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   const [callMode, setCallMode] = useState<'audio' | 'video'>('audio');
   const [lockProgress, setLockProgress] = useState(0);
   const [otherUserId, setOtherUserId] = useState('');
+  const [otherUserStatus, setOtherUserStatus] = useState<'online' | 'offline'>('offline');
 
   const otherUserIdRef = useRef('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -141,13 +142,20 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
     };
   }, [handleVoicePointerMove, handleVoicePointerUp]);
 
+  // Listen for real-time presence changes
+  useEffect(() => {
+    return on('presence', ({ userId, status }) => {
+      if (userId === otherUserIdRef.current) setOtherUserStatus(status);
+    });
+  }, [on]);
+
   useEffect(() => {
     if (!chatId || !user?.id) return;
     fetch(`/api/chats/${chatId}/members`)
       .then((r) => r.json())
       .then((members: { id: string }[]) => {
         const other = members.find((m) => m.id !== user.id);
-        if (other) { setOtherUserId(other.id); otherUserIdRef.current = other.id; }
+        if (other) { setOtherUserId(other.id); otherUserIdRef.current = other.id; setOtherUserStatus((other as any).status === 'online' ? 'online' : 'offline'); }
       })
       .catch(() => {});
   }, [chatId, user?.id]);
@@ -304,7 +312,9 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
                 escribiendo...
               </p>
             ) : (
-              <p className="text-xs text-secondary/60 tracking-widest uppercase">Online</p>
+              <p className={`text-xs tracking-widest uppercase font-semibold ${otherUserStatus === 'online' ? 'text-green-400' : 'text-muted-foreground/50'}`}>
+                {otherUserStatus === 'online' ? '● Online' : '○ Offline'}
+              </p>
             )}
           </div>
         </div>

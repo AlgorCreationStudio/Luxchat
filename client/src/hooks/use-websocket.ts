@@ -11,7 +11,8 @@ type WsIncoming =
   | { type: 'delete'; payload: { messageId: number; chatId: string } }
   | { type: 'call'; payload: { toUserId: string; fromUserId: string; fromName: string; action: string } }
   | { type: 'contact_request'; payload: { fromUserId: string; fromName: string } }
-  | { type: 'webrtc_signal'; payload: { fromUserId: string; signalType: 'offer' | 'answer' | 'ice'; data: unknown } };
+  | { type: 'webrtc_signal'; payload: { fromUserId: string; signalType: 'offer' | 'answer' | 'ice'; data: unknown } }
+  | { type: 'presence'; payload: { userId: string; status: 'online' | 'offline'; lastSeen?: string } };
 
 type WsEventMap = {
   typing: (payload: { chatId: string; userId: string; isTyping: boolean; name: string }) => void;
@@ -19,6 +20,7 @@ type WsEventMap = {
   call: (payload: { toUserId: string; fromUserId: string; fromName: string; action: string }) => void;
   contact_request: (payload: { fromUserId: string; fromName: string }) => void;
   webrtc_signal: (payload: { fromUserId: string; signalType: 'offer' | 'answer' | 'ice'; data: unknown }) => void;
+  presence: (payload: { userId: string; status: 'online' | 'offline'; lastSeen?: string }) => void;
 };
 
 // ─── SINGLETON WebSocket ─────────────────────────────────────────────────────
@@ -182,6 +184,9 @@ export function useWebSocket() {
         if (msg.payload.action === 'incoming') showNotification('LuxChat', `📞 Llamada entrante de ${msg.payload.fromName}`);
       }
       if (msg.type === 'webrtc_signal') globalListeners.get('webrtc_signal')?.forEach((fn) => fn(msg.payload));
+      if (msg.type === 'presence') {
+        globalListeners.get('presence')?.forEach((fn) => fn(msg.payload));
+      }
       if (msg.type === 'contact_request') {
         globalListeners.get('contact_request')?.forEach((fn) => fn(msg.payload));
         queryClient.invalidateQueries({ queryKey: ['pending-requests', user.id] });

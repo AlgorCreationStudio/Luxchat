@@ -350,6 +350,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       addClient(clients, userId, ws);
       storage.updateUserStatus(userId, "online").catch(() => {});
 
+      // Notify contacts that this user came online
+      storage.getUserContacts(userId).then((contactList) => {
+        const contactIds = contactList.map((c) => c.id);
+        broadcast(clients, contactIds, { type: "presence", payload: { userId, status: "online" } });
+      }).catch(() => {});
+
       // Push any pending contact requests immediately on connect
       storage.getPendingRequests(userId).then((pending) => {
         if (pending.length > 0 && ws.readyState === WebSocket.OPEN) {
@@ -466,6 +472,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const isLastClient = removeClient(clients, userId, ws);
         if (isLastClient) {
           storage.updateUserStatus(userId, "offline").catch(() => {});
+          // Notify contacts that this user went offline
+          storage.getUserContacts(userId).then((contactList) => {
+            const contactIds = contactList.map((c) => c.id);
+            broadcast(clients, contactIds, { type: "presence", payload: { userId, status: "offline", lastSeen: new Date().toISOString() } });
+          }).catch(() => {});
         }
       }
     });

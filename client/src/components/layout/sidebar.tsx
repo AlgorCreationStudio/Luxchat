@@ -4,6 +4,8 @@ import { useLocation } from 'wouter';
 import { MessageSquare, Users, Plus, LogOut, Copy, Check, Bell, UserCheck, UserX, Settings } from 'lucide-react';
 import { useAuthStore } from '@/store/use-auth-store';
 import { useContacts, useChats, useCreateChat, usePendingRequests, useAcceptContact, useRejectContact } from '@/hooks/use-api';
+import { useWebSocket } from '@/hooks/use-websocket';
+import { useQueryClient } from '@tanstack/react-query';
 import { Avatar, Button } from '../ui-library';
 import { AddContactModal } from '../modals/add-contact-modal';
 import { ProfileModal } from '../modals/profile-modal';
@@ -31,7 +33,18 @@ export function Sidebar() {
   const logout = useAuthStore(s => s.logout);
   const { toast } = useToast();
 
+  const { on } = useWebSocket();
+  const queryClient = useQueryClient();
   const { data: contacts = [], isLoading: loadingContacts } = useContacts(user?.id);
+
+  // Real-time presence updates
+  React.useEffect(() => {
+    return on('presence', ({ userId, status, lastSeen }) => {
+      queryClient.setQueryData<import('@shared/schema').User[]>(['contacts', user?.id], (old = []) =>
+        old.map((c) => c.id === userId ? { ...c, status, lastSeen: lastSeen ?? c.lastSeen } : c)
+      );
+    });
+  }, [on, user?.id, queryClient]);
   const { data: chats = [], isLoading: loadingChats } = useChats(user?.id);
   const { data: pendingRequests = [] } = usePendingRequests(user?.id);
   const createChat = useCreateChat();
