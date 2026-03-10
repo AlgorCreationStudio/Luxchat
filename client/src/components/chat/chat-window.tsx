@@ -63,7 +63,7 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   } = useWebRTC(setCallStatus, handleCallerSignal);
 
   // E2E — declared here so hook order is always stable
-  const { encrypt, decrypt } = useE2E(otherUserId || null);
+  const { encrypt, decrypt, waitForKey } = useE2E(otherUserId || null);
 
   // ── Derived ───────────────────────────────────────────────────────────────────
   const messages = rawMessages.map((m) => ({
@@ -76,11 +76,14 @@ export function ChatWindow({ chatId, chatName = 'Direct Message', chatAvatar, on
   useEffect(() => {
     const encrypted = rawMessages.filter((m) => (m as any).encrypted && m.content && !decryptedMap[m.id]);
     if (encrypted.length === 0) return;
-    encrypted.forEach(async (m) => {
-      const plain = await decrypt(m.content);
-      setDecryptedMap((prev) => ({ ...prev, [m.id]: plain }));
+    // Wait for E2E key to be ready before decrypting
+    waitForKey().then(() => {
+      encrypted.forEach(async (m) => {
+        const plain = await decrypt(m.content);
+        setDecryptedMap((prev) => ({ ...prev, [m.id]: plain }));
+      });
     });
-  }, [rawMessages, decrypt, otherUserId]);
+  }, [rawMessages, decrypt, otherUserId, waitForKey]);
 
   // Reset decrypted cache when switching chats
   useEffect(() => {

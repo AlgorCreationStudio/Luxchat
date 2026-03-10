@@ -13,24 +13,35 @@ export function useE2E(otherUserId: string | null) {
   const user = useAuthStore((s) => s.user);
   const sharedKeyRef = useRef<CryptoKey | null>(null);
   const readyRef = useRef(false);
+  // Promise that resolves when the shared key is ready
+  const keyReadyPromiseRef = useRef<Promise<void>>(Promise.resolve());
+  const keyReadyResolveRef = useRef<(() => void) | null>(null);
 
-  // Init: generate/load our key pair, upload public key, derive shared key
   useEffect(() => {
+    // Reset state for new otherUserId
+    sharedKeyRef.current = null;
+    readyRef.current = false;
+
     if (!user?.id || !otherUserId) return;
+
+    // Create a new promise that callers can await
+    let resolve: () => void;
+    keyReadyPromiseRef.current = new Promise<void>((res) => { resolve = res; });
+    keyReadyResolveRef.current = resolve!;
+
     let cancelled = false;
 
     (async () => {
       try {
         const myKeyPair = await getOrCreateKeyPair();
-
-        // Upload our public key (idempotent)
         await uploadPublicKey(user.id, myKeyPair.publicKeyJwk);
 
-        // Fetch the contact's public key
         const theirPublicKeyJwk = await fetchPublicKey(otherUserId);
-        if (!theirPublicKeyJwk || cancelled) return;
+        if (!theirPublicKeyJwk || cancelled) {
+          keyReadyResolveRef.current?.();
+          return;
+        }
 
-        // Derive shared secret
         const sharedKey = await getSharedKey(myKeyPair.privateKey, theirPublicKeyJwk);
         if (!cancelled) {
           sharedKeyRef.current = sharedKey;
@@ -38,6 +49,8 @@ export function useE2E(otherUserId: string | null) {
         }
       } catch (err) {
         console.warn('[E2E] Key setup failed, falling back to plaintext:', err);
+      } finally {
+        if (!cancelled) keyReadyResolveRef.current?.();
       }
     })();
 
@@ -45,6 +58,11 @@ export function useE2E(otherUserId: string | null) {
   }, [user?.id, otherUserId]);
 
   const encrypt = useCallback(async (plaintext: string): Promise<{ text: string; encrypted: boolean }> => {
+    // Wait for key to be ready (max 5s)
+    await Promise.race([
+      keyReadyPromiseRef.current,
+      new Promise<void>((r) => setTimeout(r, 5000)),
+    ]);
     if (!sharedKeyRef.current || !readyRef.current) {
       return { text: plaintext, encrypted: false };
     }
@@ -57,6 +75,11 @@ export function useE2E(otherUserId: string | null) {
   }, []);
 
   const decrypt = useCallback(async (ciphertext: string): Promise<string> => {
+    // Wait for key to be ready (max 5s)
+    await Promise.race([
+      keyReadyPromiseRef.current,
+      new Promise<void>((r) => setTimeout(r, 5000)),
+    ]);
     if (!sharedKeyRef.current || !readyRef.current) return ciphertext;
     try {
       return await decryptMessage(ciphertext, sharedKeyRef.current);
@@ -65,5 +88,8 @@ export function useE2E(otherUserId: string | null) {
     }
   }, []);
 
-  return { encrypt, decrypt, isReady: () => readyRef.current };
+  // Expose a way to know when key is ready (for re-triggering decryption)
+  const waitForKey = useCallback(() => keyReadyPromiseRef.current, []);
+
+  return { encrypt, decrypt, isReady: () => readyRef.current, waitForKey };
 }
